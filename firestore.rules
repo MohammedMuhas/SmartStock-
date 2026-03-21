@@ -1,0 +1,131 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Fields: uid, email, displayName, subscriptionStatus, whatsappNumber, role, createdAt
+    //
+    // Collection: products
+    // Fields: name, category, size, quantity, price, ownerId, createdAt, lastSoldAt
+    //
+    // Collection: sales
+    // Fields: productId, productName, quantitySold, soldAt, ownerId, totalAmount
+    //
+    // Collection: support_requests
+    // Fields: userId, userEmail, request, contactEmail, status, createdAt
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && resource != null && request.auth.uid == resource.data.ownerId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (request.auth.token.email == "mohamedmukasin@gmail.com" ||
+         request.auth.token.email == "johnwickmr16@gmail.com" ||
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidDateString(dateStr) {
+      return dateStr is string && dateStr.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*Z?$");
+    }
+
+    function isValidUser(data) {
+      return data.uid is string &&
+             data.email is string && isValidEmail(data.email) &&
+             data.subscriptionStatus in ['free', 'premium'] &&
+             data.role in ['user', 'admin'] &&
+             isValidDateString(data.createdAt);
+    }
+
+    function isValidUrl(url) {
+      return url is string && (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    function isValidProduct(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.quantity is int && data.quantity >= 0 &&
+             data.price is number && data.price >= 0 &&
+             data.ownerId == request.auth.uid &&
+             isValidDateString(data.createdAt) &&
+             (!('imageUrl' in data) || isValidUrl(data.imageUrl)) &&
+             (!('category' in data) || data.category is string) &&
+             (!('size' in data) || data.size is string) &&
+             (!('color' in data) || data.color is string) &&
+             (!('material' in data) || data.material is string) &&
+             (!('supplier' in data) || data.supplier is string) &&
+             (!('discountPrice' in data) || data.discountPrice is number) &&
+             (!('taxRate' in data) || data.taxRate is number);
+    }
+
+    function isValidSale(data) {
+      return data.productId is string &&
+             data.quantitySold is int && data.quantitySold > 0 &&
+             data.ownerId == request.auth.uid &&
+             isValidDateString(data.soldAt);
+    }
+
+    function isValidSupportRequest(data) {
+      return hasOnlyAllowedFields(['userId', 'userEmail', 'request', 'contactEmail', 'status', 'createdAt']) &&
+             data.request is string && data.request.size() > 0 && data.request.size() < 2000 &&
+             isValidDateString(data.createdAt) &&
+             data.status in ['pending', 'reviewed', 'resolved'] &&
+             (!('contactEmail' in data) || (data.contactEmail is string && data.contactEmail.size() < 100)) &&
+             (!('userId' in data) || data.userId is string) &&
+             (!('userEmail' in data) || data.userEmail is string);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow create: if isAuthenticated() && request.auth.uid == userId && isValidUser(request.resource.data);
+      allow update: if isAuthenticated() && (request.auth.uid == userId || isAdmin()) && isValidUser(request.resource.data);
+    }
+
+    match /products/{productId} {
+      allow read: if isDocOwner() || isAdmin();
+      allow create: if isAuthenticated() && isValidProduct(request.resource.data);
+      allow update: if (isDocOwner() || isAdmin()) && isValidProduct(request.resource.data);
+      allow delete: if isDocOwner() || isAdmin();
+    }
+
+    match /sales/{saleId} {
+      allow read: if isDocOwner() || isAdmin();
+      allow create: if isAuthenticated() && isValidSale(request.resource.data);
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /support_requests/{requestId} {
+      allow create: if isAuthenticated() && isValidSupportRequest(request.resource.data);
+      allow read, update, delete: if isAdmin();
+    }
+  }
+}

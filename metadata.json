@@ -1,0 +1,5 @@
+{
+  "name": "SmartStock",
+  "description": "Micro SaaS for small clothing shop owners to track inventory and sales.",
+  "requestFramePermissions": []
+}

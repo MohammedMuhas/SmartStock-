@@ -1,0 +1,87 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and subscription data",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "subscriptionStatus": { "type": "string", "enum": ["free", "premium"] },
+        "whatsappNumber": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "admin"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "subscriptionStatus", "role"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Clothing item in inventory",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "size": { "type": "string" },
+        "color": { "type": "string" },
+        "material": { "type": "string" },
+        "supplier": { "type": "string" },
+        "imageUrl": { "type": "string", "format": "uri" },
+        "quantity": { "type": "integer" },
+        "price": { "type": "number" },
+        "discountPrice": { "type": "number" },
+        "taxRate": { "type": "number" },
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "lastSoldAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "quantity", "price", "ownerId"]
+    },
+    "Sale": {
+      "title": "Sale",
+      "description": "Daily sales record",
+      "type": "object",
+      "properties": {
+        "productId": { "type": "string" },
+        "productName": { "type": "string" },
+        "quantitySold": { "type": "integer" },
+        "soldAt": { "type": "string", "format": "date-time" },
+        "ownerId": { "type": "string" },
+        "totalAmount": { "type": "number" }
+      },
+      "required": ["productId", "quantitySold", "soldAt", "ownerId"]
+    },
+    "SupportRequest": {
+      "title": "Support Request",
+      "description": "User submitted problem or feature request",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string", "format": "email" },
+        "request": { "type": "string" },
+        "contactEmail": { "type": "string", "format": "email" },
+        "status": { "type": "string", "enum": ["pending", "reviewed", "resolved"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["request", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Inventory items"
+    },
+    "/sales/{saleId}": {
+      "schema": "Sale",
+      "description": "Sales records"
+    },
+    "/support_requests/{requestId}": {
+      "schema": "SupportRequest",
+      "description": "User support and feature requests"
+    }
+  }
+}
