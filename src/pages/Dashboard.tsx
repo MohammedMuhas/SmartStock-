@@ -208,7 +208,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
       const currentMinute = now.getMinutes();
       
       // Check if it's 9:40 PM (21:40)
-      if (currentHour === 21 && currentMinute === 40) {
+      if (currentHour === 21 && currentMinute === 40 && profile?.subscriptionStatus === 'premium') {
         const lastSent = localStorage.getItem('lastDailySummarySent');
         const today = new Date().toDateString();
         
@@ -240,7 +240,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
 
   return (
     <div className="space-y-8">
-      {profile && !profile.whatsappNumber && (
+      {profile && profile.subscriptionStatus === 'premium' && !profile.whatsappNumber && (
         <motion.div 
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -550,7 +550,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         </div>
 
         {/* Dead Stock Alerts */}
-        <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
+        <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden relative">
           <div className="p-6 border-b border-slate-50 flex items-center justify-between">
             <h2 className="font-bold text-slate-900 flex items-center gap-2">
               <Clock className="w-5 h-5 text-rose-500" />
@@ -558,24 +558,41 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
             </h2>
             <button onClick={() => onNavigate('inventory')} className="text-sm text-emerald-600 font-semibold hover:underline">View All</button>
           </div>
-          <div className="divide-y divide-slate-50">
-            {deadStockItems.length > 0 ? deadStockItems.slice(0, 5).map(item => (
-              <div key={item.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
-                <div>
-                  <p className="font-semibold text-slate-900">{item.name}</p>
-                  <p className="text-xs text-slate-500">{item.category} • {item.size}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm font-bold text-rose-600">{item.quantity} in stock</p>
-                  <p className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">No Recent Sales</p>
-                </div>
+          
+          {profile?.subscriptionStatus === 'free' ? (
+            <div className="p-12 text-center bg-slate-50/30 flex flex-col items-center justify-center">
+              <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm mb-4 border border-slate-100">
+                <Lock className="w-6 h-6 text-amber-500" />
               </div>
-            )) : (
-              <div className="p-12 text-center">
-                <p className="text-slate-400 text-sm">No dead stock. Everything is moving!</p>
-              </div>
-            )}
-          </div>
+              <p className="text-slate-900 font-bold text-sm">Prime Feature</p>
+              <p className="text-slate-500 text-xs mt-1 mb-4">Upgrade to detect products that haven't sold in 30 days.</p>
+              <button 
+                onClick={() => onNavigate('subscription')}
+                className="text-xs font-bold text-emerald-600 hover:underline uppercase tracking-widest"
+              >
+                Upgrade Now
+              </button>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-50">
+              {deadStockItems.length > 0 ? deadStockItems.slice(0, 5).map(item => (
+                <div key={item.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                  <div>
+                    <p className="font-semibold text-slate-900">{item.name}</p>
+                    <p className="text-xs text-slate-500">{item.category} • {item.size}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-bold text-rose-600">{item.quantity} in stock</p>
+                    <p className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">No Recent Sales</p>
+                  </div>
+                </div>
+              )) : (
+                <div className="p-12 text-center">
+                  <p className="text-slate-400 text-sm">No dead stock. Everything is moving!</p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Recent Sales */}

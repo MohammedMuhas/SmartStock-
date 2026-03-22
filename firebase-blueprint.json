@@ -29,13 +29,14 @@
         "imageUrl": { "type": "string", "format": "uri" },
         "quantity": { "type": "integer" },
         "price": { "type": "number" },
+        "costPrice": { "type": "number", "description": "The price paid to acquire the product" },
         "discountPrice": { "type": "number" },
         "taxRate": { "type": "number" },
         "ownerId": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" },
         "lastSoldAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["name", "quantity", "price", "ownerId"]
+      "required": ["name", "quantity", "price", "costPrice", "ownerId"]
     },
     "Sale": {
       "title": "Sale",
@@ -47,9 +48,10 @@
         "quantitySold": { "type": "integer" },
         "soldAt": { "type": "string", "format": "date-time" },
         "ownerId": { "type": "string" },
-        "totalAmount": { "type": "number" }
+        "totalAmount": { "type": "number" },
+        "costPrice": { "type": "number", "description": "The cost price of the product at the time of sale" }
       },
-      "required": ["productId", "quantitySold", "soldAt", "ownerId"]
+      "required": ["productId", "quantitySold", "soldAt", "ownerId", "totalAmount", "costPrice"]
     },
     "SupportRequest": {
       "title": "Support Request",

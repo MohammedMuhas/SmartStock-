@@ -9,10 +9,10 @@ service cloud.firestore {
     // Fields: uid, email, displayName, subscriptionStatus, whatsappNumber, role, createdAt
     //
     // Collection: products
-    // Fields: name, category, size, quantity, price, ownerId, createdAt, lastSoldAt
+    // Fields: name, category, size, quantity, price, costPrice, ownerId, createdAt, lastSoldAt
     //
     // Collection: sales
-    // Fields: productId, productName, quantitySold, soldAt, ownerId, totalAmount
+    // Fields: productId, productName, quantitySold, soldAt, ownerId, totalAmount, costPrice
     //
     // Collection: support_requests
     // Fields: userId, userEmail, request, contactEmail, status, createdAt
@@ -70,6 +70,7 @@ service cloud.firestore {
       return data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
              data.quantity is int && data.quantity >= 0 &&
              data.price is number && data.price >= 0 &&
+             data.costPrice is number && data.costPrice >= 0 &&
              data.ownerId == request.auth.uid &&
              isValidDateString(data.createdAt) &&
              (!('imageUrl' in data) || isValidUrl(data.imageUrl)) &&
@@ -86,6 +87,8 @@ service cloud.firestore {
       return data.productId is string &&
              data.quantitySold is int && data.quantitySold > 0 &&
              data.ownerId == request.auth.uid &&
+             data.totalAmount is number && data.totalAmount >= 0 &&
+             data.costPrice is number && data.costPrice >= 0 &&
              isValidDateString(data.soldAt);
     }
 

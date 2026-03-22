@@ -11,10 +11,12 @@ import {
   Infinity,
   Loader2,
   Package,
-  CreditCard
+  CreditCard,
+  AlertCircle
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { toast } from 'sonner';
+import { motion, AnimatePresence } from 'motion/react';
 
 declare global {
   interface Window {
@@ -25,85 +27,239 @@ declare global {
 export const Subscription: React.FC = () => {
   const { user, profile } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [loadingTime, setLoadingTime] = useState(0);
+  const [scriptLoaded, setScriptLoaded] = useState(!!window.Razorpay);
+  const [isIframe, setIsIframe] = useState(false);
 
-  const handleUpgrade = () => {
+  React.useEffect(() => {
+    setIsIframe(window.self !== window.top);
+    const checkScript = () => {
+      if (window.Razorpay) {
+        setScriptLoaded(true);
+      }
+    };
+    
+    const interval = setInterval(checkScript, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  React.useEffect(() => {
+    let timer: any;
+    if (loading) {
+      timer = setInterval(() => {
+        setLoadingTime(prev => prev + 1);
+      }, 1000);
+    } else {
+      setLoadingTime(0);
+    }
+    return () => clearInterval(timer);
+  }, [loading]);
+
+  React.useEffect(() => {
+    if (loading) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    return () => {
+      document.body.style.overflow = 'unset';
+    };
+  }, [loading]);
+
+  const [diagnosticData, setDiagnosticData] = useState<any>(null);
+  const [showDiagnostic, setShowDiagnostic] = useState(false);
+
+  const runDiagnostic = async () => {
+    try {
+      const response = await fetch('/api/razorpay/diagnostic');
+      const data = await response.json();
+      setDiagnosticData(data);
+      setShowDiagnostic(true);
+    } catch (err) {
+      toast.error('Failed to run diagnostic.');
+    }
+  };
+
+  const completeMockUpgrade = async () => {
     if (!user) return;
+    setLoading(true);
+    toast.info('Mock Payment Mode', {
+      description: 'Simulating a successful payment...',
+    });
     
+    // Simulate network delay
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        subscriptionStatus: 'premium',
+        paymentMethod: 'mock_gateway',
+        upgradedAt: new Date().toISOString()
+      });
+      toast.success('Mock Upgrade Successful!', {
+        description: 'You now have full access to Prime features (Simulated).',
+      });
+    } catch (err) {
+      toast.error('Mock upgrade failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpgrade = async () => {
+    if (!user) return;
+
+    if (isDummyKey) {
+      await completeMockUpgrade();
+      return;
+    }
+
     const razorpayKey = import.meta.env.VITE_RAZORPAY_KEY_ID;
+    console.log('Razorpay Key:', razorpayKey ? 'Configured' : 'Missing');
     
-    // Demo Mode: If no Razorpay key is configured, allow a direct upgrade for testing
     if (!razorpayKey || razorpayKey === 'rzp_test_dummykey') {
-      setLoading(true);
-      setTimeout(async () => {
-        try {
-          await updateDoc(doc(db, 'users', user.uid), {
-            subscriptionStatus: 'premium',
-            paymentId: 'demo_payment_' + Math.random().toString(36).substring(7),
-            upgradedAt: new Date().toISOString()
-          });
-          toast.success('Prime Plan Activated!', {
-            description: 'You now have access to all Prime features.',
-            duration: 5000,
-          });
-        } catch (error) {
-          console.error('Error upgrading:', error);
-          toast.error('Failed to update subscription.');
-        } finally {
-          setLoading(false);
-        }
-      }, 1500);
+      toast.error('Payment gateway not configured.', {
+        description: 'Please set VITE_RAZORPAY_KEY_ID in the app settings.',
+      });
+      return;
+    }
+
+    if (!window.Razorpay) {
+      toast.error('Payment gateway failed to load.', {
+        description: 'Please check your internet connection or disable ad-blockers.',
+      });
       return;
     }
 
     setLoading(true);
+    setLoadingTime(0);
 
-    const options = {
-      key: razorpayKey,
-      amount: 29900, // Amount in paise (₹299)
-      currency: "INR",
-      name: "SmartStock Prime",
-      description: "Monthly Subscription",
-      handler: async function (response: any) {
-        try {
-          await updateDoc(doc(db, 'users', user.uid), {
-            subscriptionStatus: 'premium',
-            paymentId: response.razorpay_payment_id,
-            upgradedAt: new Date().toISOString()
-          });
-          toast.success('Payment Received! Welcome to Prime.', {
-            description: `Payment ID: ${response.razorpay_payment_id}`,
-            duration: 5000,
-          });
-        } catch (error) {
-          console.error('Error upgrading:', error);
-          toast.error('Failed to update subscription. Please contact support.');
-        } finally {
-          setLoading(false);
-        }
-      },
-      modal: {
-        ondismiss: function() {
-          setLoading(false);
-        }
-      },
-      prefill: {
-        name: profile?.displayName,
-        email: profile?.email
-      },
-      theme: {
-        color: "#059669"
-      }
-    };
+    const timeoutId = setTimeout(() => {
+      setLoading(false);
+      toast.error('Payment gateway timed out.', {
+        description: 'The window failed to open. This is often blocked by the browser. Please use the "Open in New Tab" button below.',
+        duration: 10000,
+      });
+    }, 15000);
 
     try {
+      // 1. Create Order on Backend
+      const orderResponse = await fetch('/api/razorpay/create-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: 29900 }) // ₹299 in paise
+      });
+
+      const orderData = await orderResponse.json();
+
+      if (!orderResponse.ok) {
+        throw new Error(orderData.details || orderData.error || 'Failed to create order on server');
+      }
+
+      // Handle Mock Order from Server (Fallback)
+      if (orderData.isMock) {
+        clearTimeout(timeoutId);
+        if (orderData.warning) {
+          toast.warning('Authentication Failed', {
+            description: orderData.warning,
+            duration: 8000
+          });
+        }
+        await completeMockUpgrade();
+        return;
+      }
+
+      const options = {
+        key: razorpayKey,
+        amount: orderData.amount,
+        currency: orderData.currency,
+        name: "SmartStock Prime",
+        description: "Monthly Subscription",
+        order_id: orderData.id,
+        handler: async function (response: any) {
+          clearTimeout(timeoutId);
+          try {
+            // 2. Verify Payment on Backend
+            const verifyResponse = await fetch('/api/razorpay/verify-payment', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+                userId: user.uid
+              })
+            });
+
+            if (!verifyResponse.ok) {
+              throw new Error('Payment verification failed on server');
+            }
+
+            toast.success('Payment Received! Welcome to Prime.', {
+              description: `Payment ID: ${response.razorpay_payment_id}`,
+              duration: 5000,
+            });
+          } catch (error) {
+            console.error('Error verifying payment:', error);
+            toast.error('Failed to verify payment. Please contact support.');
+          } finally {
+            setLoading(false);
+          }
+        },
+        modal: {
+          ondismiss: function() {
+            clearTimeout(timeoutId);
+            setLoading(false);
+          }
+        },
+        prefill: {
+          name: profile?.displayName || user.displayName || 'User',
+          email: profile?.email || user.email || ''
+        },
+        theme: {
+          color: "#059669"
+        }
+      };
+
       const rzp = new window.Razorpay(options);
       rzp.open();
-    } catch (err) {
+    } catch (err: any) {
+      clearTimeout(timeoutId);
       console.error('Razorpay failed to open:', err);
-      toast.error('Could not open payment gateway. Check your internet connection.');
+      toast.error('Could not open payment gateway.', {
+        description: err.message || 'Check your internet connection or console for errors.',
+      });
       setLoading(false);
     }
   };
+
+  const handleDowngrade = async () => {
+    if (!user) return;
+    
+    if (!window.confirm('Are you sure you want to downgrade to the Free plan? You will lose access to Prime features.')) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        subscriptionStatus: 'free',
+        downgradedAt: new Date().toISOString()
+      });
+      toast.success('Subscription Updated', {
+        description: 'You have been downgraded to the Free plan.',
+      });
+    } catch (error) {
+      console.error('Error downgrading:', error);
+      toast.error('Failed to update subscription.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const isDummyKey = !import.meta.env.VITE_RAZORPAY_KEY_ID || 
+                   import.meta.env.VITE_RAZORPAY_KEY_ID === "rzp_test_SUGn0AqySjAbLV" ||
+                   import.meta.env.VITE_RAZORPAY_KEY_ID === "rzp_test_dummykey";
 
   const plans = [
     {
@@ -117,8 +273,8 @@ export const Subscription: React.FC = () => {
         'Standard support'
       ],
       current: profile?.subscriptionStatus === 'free',
-      buttonText: 'Current Plan',
-      buttonAction: null,
+      buttonText: profile?.subscriptionStatus === 'premium' ? 'Downgrade to Free' : 'Current Plan',
+      buttonAction: profile?.subscriptionStatus === 'premium' ? handleDowngrade : null,
     },
     {
       name: 'Prime',
@@ -141,11 +297,95 @@ export const Subscription: React.FC = () => {
 
   return (
     <div className="max-w-5xl mx-auto space-y-12 py-8">
+      {isDummyKey && (
+        <div className="p-8 bg-amber-50 border border-amber-200 rounded-[3rem] flex flex-col md:flex-row items-center md:items-start gap-6 animate-in slide-in-from-top duration-500">
+          <div className="p-4 bg-amber-100 rounded-3xl shrink-0">
+            <AlertCircle className="w-8 h-8 text-amber-600" />
+          </div>
+          <div className="space-y-3 text-center md:text-left">
+            <h3 className="text-xl font-black text-amber-900">Payment Setup Required</h3>
+            <p className="text-amber-800 font-medium leading-relaxed max-w-2xl">
+              The application is currently using <strong>placeholder (dummy) keys</strong> for Razorpay. 
+              Payments will fail until you provide your own real keys from the Razorpay Dashboard.
+            </p>
+            <div className="flex flex-wrap justify-center md:justify-start gap-4 pt-2">
+              <a 
+                href="https://dashboard.razorpay.com/app/keys" 
+                target="_blank" 
+                rel="noreferrer"
+                className="px-4 py-2 bg-amber-900 text-white text-xs font-black rounded-xl hover:bg-amber-800 transition-colors uppercase tracking-widest"
+              >
+                Get Real Keys
+              </a>
+              <button 
+                onClick={() => toast.info("Go to Settings -> Environment Variables in AI Studio to update your keys.")}
+                className="px-4 py-2 border-2 border-amber-900 text-amber-900 text-xs font-black rounded-xl hover:bg-amber-100 transition-colors uppercase tracking-widest"
+              >
+                How to update?
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {loading && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2.5rem] p-8 max-w-sm w-full shadow-2xl border border-slate-200 text-center space-y-6 animate-in fade-in zoom-in duration-300">
+            <div className="w-20 h-20 bg-emerald-100 rounded-3xl flex items-center justify-center mx-auto">
+              <Loader2 className="w-10 h-10 text-emerald-600 animate-spin" />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-2xl font-black text-slate-900">Opening Secure Gateway</h3>
+              <p className="text-slate-500 font-medium">Please wait while we connect to Razorpay. Do not refresh the page.</p>
+            </div>
+            
+            <div className="bg-slate-50 rounded-2xl p-4 text-sm font-bold text-slate-400 uppercase tracking-widest">
+              Time Elapsed: {loadingTime}s
+            </div>
+
+            {loadingTime > 5 && (
+              <div className="space-y-3 pt-2">
+                <button 
+                  onClick={() => window.open(window.location.href, '_blank')}
+                  className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 flex items-center justify-center gap-2"
+                >
+                  <CreditCard className="w-5 h-5" />
+                  Try in New Tab
+                </button>
+                <button 
+                  onClick={() => setLoading(false)}
+                  className="w-full bg-slate-100 text-slate-600 py-4 rounded-2xl font-bold hover:bg-slate-200 transition-all"
+                >
+                  Cancel & Reset
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="text-center space-y-4">
         <h1 className="text-4xl font-black text-slate-900 tracking-tight">Simple, Transparent Pricing</h1>
-        <p className="text-slate-500 text-lg max-w-2xl mx-auto">
-          Choose the plan that's right for your shop. Upgrade or downgrade at any time.
-        </p>
+        
+        {(!import.meta.env.VITE_RAZORPAY_KEY_ID || import.meta.env.VITE_RAZORPAY_KEY_ID === 'rzp_test_dummykey') && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 max-w-2xl mx-auto flex items-center gap-3 text-amber-800 text-sm font-medium">
+            <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
+            <p className="text-left">Payment gateway is not configured. Please set <code className="bg-amber-100 px-1 rounded">VITE_RAZORPAY_KEY_ID</code> in the app settings to enable upgrades.</p>
+          </div>
+        )}
+        
+        {!scriptLoaded && (
+          <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 max-w-2xl mx-auto flex items-center gap-3 text-rose-800 text-sm font-medium">
+            <Loader2 className="w-5 h-5 text-rose-500 animate-spin shrink-0" />
+            <p className="flex-1 text-left">Loading payment gateway... Please ensure you have a stable internet connection and ad-blockers are disabled.</p>
+            <button 
+              onClick={() => window.location.reload()}
+              className="text-xs bg-rose-200 px-3 py-1.5 rounded-lg hover:bg-rose-300 transition-colors"
+            >
+              Retry
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -192,48 +432,27 @@ export const Subscription: React.FC = () => {
 
               <button
                 onClick={() => plan.buttonAction?.()}
-                disabled={!plan.buttonAction || loading}
+                disabled={!plan.buttonAction || (loading && plan.name === 'Prime')}
                 className={cn(
-                  "w-full py-4 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 mt-8",
+                  "w-full py-4 rounded-2xl font-bold transition-all flex flex-col items-center justify-center gap-2 mt-8",
                   plan.highlight
                     ? "bg-emerald-600 text-white shadow-lg shadow-emerald-100 hover:bg-emerald-700"
                     : "bg-slate-100 text-slate-900 hover:bg-slate-200",
                   !plan.buttonAction && "opacity-50 cursor-default"
                 )}
               >
-                {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : plan.buttonText}
+                {loading && plan.name === 'Prime' ? (
+                  <div className="flex items-center gap-3">
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span>Loading...</span>
+                  </div>
+                ) : plan.buttonText}
               </button>
             </div>
           </div>
         ))}
       </div>
 
-      {/* Feature Comparison */}
-      <div className="bg-slate-900 rounded-[3rem] p-12 text-white">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-12">
-          <div className="space-y-4">
-            <div className="w-12 h-12 bg-emerald-500/20 rounded-2xl flex items-center justify-center">
-              <Infinity className="text-emerald-400 w-6 h-6" />
-            </div>
-            <h3 className="text-xl font-bold">Unlimited Growth</h3>
-            <p className="text-slate-400 text-sm leading-relaxed">Premium users can track as many products as they want. No limits, no worries.</p>
-          </div>
-          <div className="space-y-4">
-            <div className="w-12 h-12 bg-emerald-500/20 rounded-2xl flex items-center justify-center">
-              <MessageSquare className="text-emerald-400 w-6 h-6" />
-            </div>
-            <h3 className="text-xl font-bold">WhatsApp Alerts</h3>
-            <p className="text-slate-400 text-sm leading-relaxed">Get instant notifications on your phone when stock is low. Never miss a sale.</p>
-          </div>
-          <div className="space-y-4">
-            <div className="w-12 h-12 bg-emerald-500/20 rounded-2xl flex items-center justify-center">
-              <BarChart3 className="text-emerald-400 w-6 h-6" />
-            </div>
-            <h3 className="text-xl font-bold">Smart Insights</h3>
-            <p className="text-slate-400 text-sm leading-relaxed">Identify dead stock and top performing items with our advanced reporting tools for Prime users.</p>
-          </div>
-        </div>
-      </div>
     </div>
   );
 };

@@ -59,6 +59,7 @@ export const Inventory: React.FC = () => {
     supplier: '',
     quantity: 0,
     price: 0,
+    costPrice: 0,
     discountPrice: 0,
     taxRate: 0
   });
@@ -103,6 +104,7 @@ export const Inventory: React.FC = () => {
       supplier: '',
       quantity: 0,
       price: 0,
+      costPrice: 0,
       discountPrice: 0,
       taxRate: 0
     });
@@ -131,6 +133,7 @@ export const Inventory: React.FC = () => {
         supplier: product.supplier || '',
         quantity: product.quantity,
         price: product.price,
+        costPrice: product.costPrice || 0,
         discountPrice: product.discountPrice || 0,
         taxRate: product.taxRate || 0
       });
@@ -187,6 +190,7 @@ export const Inventory: React.FC = () => {
         imageUrl,
         quantity: Number(formData.quantity),
         price: Number(formData.price),
+        costPrice: Number(formData.costPrice),
         discountPrice: Number(formData.discountPrice) || 0,
         taxRate: Number(formData.taxRate) || 0,
         ownerId: user.uid,
@@ -329,6 +333,22 @@ export const Inventory: React.FC = () => {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Inventory</h1>
           <p className="text-slate-500">Manage your shop's clothing stock.</p>
+          {profile?.subscriptionStatus === 'free' && (
+            <div className="mt-2 flex items-center gap-2">
+              <div className="h-1.5 w-32 bg-slate-100 rounded-full overflow-hidden">
+                <div 
+                  className={cn(
+                    "h-full transition-all duration-500",
+                    products.length >= 45 ? "bg-rose-500" : "bg-emerald-500"
+                  )}
+                  style={{ width: `${Math.min((products.length / 50) * 100, 100)}%` }}
+                />
+              </div>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                {products.length}/50 Products Used
+              </span>
+            </div>
+          )}
         </div>
         <motion.button 
           whileHover={{ scale: 1.02 }}
@@ -589,6 +609,10 @@ export const Inventory: React.FC = () => {
                         currentViewingProduct.quantity < 5 ? "text-amber-600" : "text-slate-900"
                       )}>{currentViewingProduct.quantity} units</p>
                     </div>
+                    <div>
+                      <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Cost Price</p>
+                      <p className="text-slate-900 font-semibold">₹{currentViewingProduct.costPrice}</p>
+                    </div>
                     {currentViewingProduct.color && (
                       <div>
                         <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Color</p>
@@ -773,7 +797,19 @@ export const Inventory: React.FC = () => {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-sm font-medium text-slate-700">Price (₹)</label>
+                    <label className="text-sm font-medium text-slate-700">Cost Price (₹)</label>
+                    <input
+                      type="number"
+                      required
+                      min="0"
+                      value={formData.costPrice}
+                      onChange={(e) => setFormData({ ...formData, costPrice: Number(e.target.value) })}
+                      className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
+                      placeholder="Price you paid"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium text-slate-700">Selling Price (₹)</label>
                     <input
                       type="number"
                       required

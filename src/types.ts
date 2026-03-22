@@ -25,6 +25,7 @@ export interface Product {
   imageUrl?: string;
   quantity: number;
   price: number;
+  costPrice: number;
   discountPrice?: number;
   taxRate?: number;
   ownerId: string;
@@ -41,6 +42,7 @@ export interface Sale {
   soldAt: string;
   ownerId: string;
   totalAmount: number;
+  costPrice: number;
   subtotal?: number;
   taxAmount?: number;
   taxRate?: number;

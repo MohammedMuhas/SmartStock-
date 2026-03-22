@@ -11,6 +11,8 @@ import { format, startOfDay, endOfDay } from "date-fns";
 import fs from "fs";
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
+import Razorpay from "razorpay";
+import crypto from "crypto";
 
 dotenv.config();
 
@@ -35,6 +37,148 @@ async function startServer() {
   const PORT = 3000;
 
   app.use(express.json());
+
+  // Razorpay Diagnostic Endpoint
+  app.get("/api/razorpay/diagnostic", (req, res) => {
+    const keyId = process.env.RAZORPAY_KEY_ID || process.env.VITE_RAZORPAY_KEY_ID;
+    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+
+    const DUMMY_KEY_ID = "rzp_test_SUGn0AqySjAbLV";
+    const DUMMY_SECRET = "1nR5Xq9fzeXBUehsmo7WrVi";
+
+    const diagnose = (val: string | undefined, name: string, dummy: string) => {
+      if (!val) return { status: "Missing", length: 0 };
+      const trimmed = val.trim();
+      const hasSecretsWord = trimmed.toLowerCase().includes("secrets");
+      const isDummy = trimmed === dummy;
+      
+      return {
+        status: "Present",
+        length: trimmed.length,
+        prefix: trimmed.substring(0, 8) + "...",
+        suffix: "..." + trimmed.substring(Math.max(0, trimmed.length - 4)),
+        hasWhitespace: val !== trimmed,
+        hasSecretsWord,
+        isDummy,
+        recommendation: isDummy 
+          ? `You are using a dummy ${name}. Please replace it with your real key from the Razorpay Dashboard.` 
+          : (hasSecretsWord ? `Remove the word 'Secrets' from your ${name} value.` : "None")
+      };
+    };
+
+    res.json({
+      keyId: diagnose(keyId, "Key ID", DUMMY_KEY_ID),
+      keySecret: diagnose(keySecret, "Key Secret", DUMMY_SECRET),
+      nodeEnv: process.env.NODE_ENV,
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  // Razorpay Order Creation
+  app.post("/api/razorpay/create-order", async (req, res) => {
+    const { amount, currency = "INR" } = req.body;
+
+    const cleanKey = (val: string | undefined) => {
+      if (!val) return undefined;
+      let cleaned = val.trim();
+      // Strip "Secrets" if it's at the beginning (common copy-paste error)
+      if (cleaned.toLowerCase().startsWith("secrets")) {
+        cleaned = cleaned.substring(7).trim();
+      }
+      return cleaned;
+    };
+
+    const keyId = cleanKey(process.env.RAZORPAY_KEY_ID || process.env.VITE_RAZORPAY_KEY_ID);
+    const keySecret = cleanKey(process.env.RAZORPAY_KEY_SECRET);
+
+    const DUMMY_KEY_ID = "rzp_test_SUGn0AqySjAbLV";
+    const DUMMY_SECRET = "1nR5Xq9fzeXBUehsmo7WrVi";
+
+    if (!keyId || !keySecret || keyId === DUMMY_KEY_ID || keySecret === DUMMY_SECRET || keyId === "rzp_test_dummykey") {
+      console.log("Mock Razorpay order requested (Dummy or missing keys detected).");
+      return res.json({
+        id: `order_mock_${Date.now()}`,
+        amount: amount,
+        currency: currency,
+        isMock: true
+      });
+    }
+
+    // Diagnostic log (masked)
+    console.log(`[Razorpay Diagnostic] Key ID: ${keyId?.substring(0, 8)}... Secret: ${keySecret?.substring(0, 4)}...`);
+
+    try {
+      const razorpay = new Razorpay({
+        key_id: keyId,
+        key_secret: keySecret,
+      });
+
+      const options = {
+        amount: amount, // amount in the smallest currency unit
+        currency: currency,
+        receipt: `receipt_${Date.now()}`,
+      };
+
+      const order = await razorpay.orders.create(options);
+      res.json(order);
+    } catch (error: any) {
+      console.error("Error creating Razorpay order:", error);
+      
+      // If authentication fails, fallback to mock order in preview environment
+      if (error?.error?.description === 'Authentication failed') {
+        console.log("Razorpay authentication failed. Falling back to mock order for preview.");
+        return res.json({ 
+          id: `order_mock_fallback_${Date.now()}`, 
+          amount: amount,
+          currency: currency,
+          isMock: true,
+          warning: "Authentication failed with your keys. Using mock mode instead."
+        });
+      }
+      
+      res.status(500).json({ error: "Failed to create order", details: error?.error?.description || "Unknown error" });
+    }
+  });
+
+  // Razorpay Payment Verification
+  app.post("/api/razorpay/verify-payment", async (req, res) => {
+    const { 
+      razorpay_order_id, 
+      razorpay_payment_id, 
+      razorpay_signature,
+      userId 
+    } = req.body;
+
+    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+
+    if (!keySecret) {
+      return res.status(500).json({ error: "Razorpay secret not configured on server" });
+    }
+
+    const hmac = crypto.createHmac("sha256", keySecret);
+    hmac.update(razorpay_order_id + "|" + razorpay_payment_id);
+    const generatedSignature = hmac.digest("hex");
+
+    if (generatedSignature === razorpay_signature) {
+      // Payment is verified
+      try {
+        if (userId) {
+          await adminDb.collection("users").doc(userId).update({
+            subscriptionStatus: "premium",
+            paymentId: razorpay_payment_id,
+            upgradedAt: new Date().toISOString()
+          });
+          console.log(`User ${userId} upgraded to premium via verified payment ${razorpay_payment_id}`);
+        }
+        res.json({ success: true, message: "Payment verified successfully" });
+      } catch (error) {
+        console.error("Error updating user subscription after verification:", error);
+        res.status(500).json({ error: "Payment verified but failed to update subscription" });
+      }
+    } else {
+      res.status(400).json({ error: "Invalid signature, payment verification failed" });
+    }
+  });
 
   // API routes
   app.get("/api/health", (req, res) => {

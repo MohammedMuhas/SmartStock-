@@ -61,13 +61,17 @@ export const Reports: React.FC = () => {
   });
 
   // Top selling products
-  const productSalesMap: { [key: string]: { name: string, count: number, revenue: number } } = {};
+  const productSalesMap: { [key: string]: { name: string, count: number, revenue: number, profit: number } } = {};
   sales.forEach(sale => {
     if (!productSalesMap[sale.productId]) {
-      productSalesMap[sale.productId] = { name: sale.productName, count: 0, revenue: 0 };
+      productSalesMap[sale.productId] = { name: sale.productName, count: 0, revenue: 0, profit: 0 };
     }
     productSalesMap[sale.productId].count += sale.quantitySold;
     productSalesMap[sale.productId].revenue += sale.totalAmount;
+    
+    // Profit = Total Amount - (Cost Price * Quantity Sold)
+    const costOfGoodsSold = (sale.costPrice || 0) * sale.quantitySold;
+    productSalesMap[sale.productId].profit += (sale.totalAmount - costOfGoodsSold);
   });
 
   const topSelling = Object.values(productSalesMap)
@@ -78,9 +82,13 @@ export const Reports: React.FC = () => {
   const last7Days = Array.from({ length: 7 }, (_, i) => subDays(new Date(), i));
   const dailySummary = last7Days.map(date => {
     const daySales = sales.filter(s => new Date(s.soldAt).toDateString() === date.toDateString());
+    const revenue = daySales.reduce((acc, s) => acc + s.totalAmount, 0);
+    const cost = daySales.reduce((acc, s) => acc + ((s.costPrice || 0) * s.quantitySold), 0);
+    
     return {
       date: format(date, 'MMM dd'),
-      revenue: daySales.reduce((acc, s) => acc + s.totalAmount, 0),
+      revenue: revenue,
+      profit: revenue - cost,
       count: daySales.reduce((acc, s) => acc + s.quantitySold, 0)
     };
   }).reverse();
@@ -106,9 +114,16 @@ export const Reports: React.FC = () => {
     doc.setTextColor(0);
     doc.text('Inventory Summary', 14, 50);
     
+    const totalRevenue = sales.reduce((acc, s) => acc + s.totalAmount, 0);
+    const totalCost = sales.reduce((acc, s) => acc + ((s.costPrice || 0) * s.quantitySold), 0);
+    const totalProfit = totalRevenue - totalCost;
+
     const summaryData = [
       ['Total Products', products.length.toString()],
-      ['Total Stock Value', `INR ${products.reduce((acc, p) => acc + (p.price * p.quantity), 0)}`],
+      ['Total Stock Value (Selling)', `INR ${products.reduce((acc, p) => acc + (p.price * p.quantity), 0)}`],
+      ['Total Stock Value (Cost)', `INR ${products.reduce((acc, p) => acc + ((p.costPrice || 0) * p.quantity), 0)}`],
+      ['Total Sales Revenue', `INR ${totalRevenue}`],
+      ['Total Profit Margin', `INR ${totalProfit}`],
       ['Low Stock Items', products.filter(p => p.quantity < 5).length.toString()],
       ['Dead Stock Items', deadStockItems.length.toString()]
     ];
@@ -127,12 +142,13 @@ export const Reports: React.FC = () => {
       (idx + 1).toString(),
       item.name,
       item.count.toString(),
-      `INR ${item.revenue}`
+      `INR ${item.revenue}`,
+      `INR ${item.profit}`
     ]);
 
     autoTable(doc, {
       startY: (doc as any).lastAutoTable.finalY + 20,
-      head: [['#', 'Product', 'Qty Sold', 'Revenue']],
+      head: [['#', 'Product', 'Qty Sold', 'Revenue', 'Profit']],
       body: topSellingData,
       theme: 'grid'
     });
@@ -175,13 +191,16 @@ export const Reports: React.FC = () => {
           </button>
         ) : (
           <button 
-            onClick={() => {}} 
-            className="flex items-center justify-center gap-2 bg-slate-100 text-slate-400 border border-slate-200 px-4 py-2 rounded-xl font-semibold cursor-not-allowed group relative"
+            onClick={() => toast.info('Prime Feature', {
+              description: 'Upgrade to Prime to download professional PDF reports and invoices.',
+              action: {
+                label: 'Upgrade',
+                onClick: () => {} // This is handled by the parent component or navigation
+              }
+            })} 
+            className="flex items-center justify-center gap-2 bg-slate-100 text-slate-400 border border-slate-200 px-6 py-3 rounded-xl font-bold cursor-not-allowed group relative"
           >
             <Lock className="w-4 h-4" /> Download Bill
-            <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-              Prime Feature
-            </div>
           </button>
         )}
       </div>
@@ -197,6 +216,9 @@ export const Reports: React.FC = () => {
             <div className="flex items-center gap-1.5">
               <div className="w-3 h-3 bg-emerald-500 rounded-full" /> Revenue
             </div>
+            <div className="flex items-center gap-1.5">
+              <div className="w-3 h-3 bg-blue-500 rounded-full" /> Profit
+            </div>
           </div>
         </div>
         
@@ -209,23 +231,33 @@ export const Reports: React.FC = () => {
         ) : (
           <div className="flex items-end justify-between h-48 gap-2">
             {dailySummary.map((day, idx) => {
-              const maxRevenue = Math.max(...dailySummary.map(d => d.revenue), 1000);
-              const height = (day.revenue / maxRevenue) * 100;
+              const maxVal = Math.max(...dailySummary.map(d => Math.max(d.revenue, d.profit)), 1000);
+              const revHeight = (day.revenue / maxVal) * 100;
+              const profitHeight = (day.profit / maxVal) * 100;
               return (
                 <div key={idx} className="flex-1 flex flex-col items-center gap-3">
-                  <div className="w-full relative group">
-                    <motion.div 
-                      initial={{ height: 0 }}
-                      animate={{ height: `${height}%` }}
-                      className="w-full bg-emerald-500/10 group-hover:bg-emerald-500/20 rounded-t-lg transition-all min-h-[4px]"
-                    />
-                    <div 
-                      className="absolute bottom-0 left-0 w-full bg-emerald-500 rounded-t-lg transition-all"
-                      style={{ height: `${height}%` }}
-                    />
+                  <div className="w-full h-full flex items-end justify-center gap-1 relative group">
+                    {/* Revenue Bar */}
+                    <div className="w-full relative h-full flex items-end">
+                      <motion.div 
+                        initial={{ height: 0 }}
+                        animate={{ height: `${revHeight}%` }}
+                        className="w-full bg-emerald-500 rounded-t-sm transition-all"
+                      />
+                    </div>
+                    {/* Profit Bar */}
+                    <div className="w-full relative h-full flex items-end">
+                      <motion.div 
+                        initial={{ height: 0 }}
+                        animate={{ height: `${profitHeight}%` }}
+                        className="w-full bg-blue-500 rounded-t-sm transition-all"
+                      />
+                    </div>
+                    
                     {/* Tooltip */}
-                    <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
-                      ₹{day.revenue}
+                    <div className="absolute -top-12 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-[10px] px-2 py-1.5 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10 shadow-xl">
+                      <p>Rev: ₹{day.revenue}</p>
+                      <p className="text-blue-300">Profit: ₹{day.profit}</p>
                     </div>
                   </div>
                   <span className="text-[10px] font-bold text-slate-400 uppercase">{day.date}</span>
@@ -256,7 +288,8 @@ export const Reports: React.FC = () => {
                 </div>
                 <div className="text-right">
                   <p className="font-bold text-slate-900">{item.count} Sold</p>
-                  <p className="text-xs text-emerald-600 font-bold">₹{item.revenue}</p>
+                  <p className="text-xs text-emerald-600 font-bold">Rev: ₹{item.revenue}</p>
+                  <p className="text-[10px] text-blue-600 font-bold">Profit: ₹{item.profit}</p>
                 </div>
               </div>
             )) : (

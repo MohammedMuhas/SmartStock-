@@ -79,7 +79,8 @@ export const SalesEntry: React.FC = () => {
         subtotal: subtotal,
         taxAmount: taxAmount,
         taxRate: productTaxRate,
-        basePrice: basePrice
+        basePrice: basePrice,
+        costPrice: selectedProduct.costPrice || 0
       };
 
       // 1. Add sale record
