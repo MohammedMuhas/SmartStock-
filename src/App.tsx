@@ -9,13 +9,42 @@ import { Reports } from './pages/Reports';
 import { Subscription } from './pages/Subscription';
 import { AdminPanel } from './pages/AdminPanel';
 import { Profile } from './pages/Profile';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Bell, BellOff } from 'lucide-react';
 import { NotificationManager } from './components/NotificationManager';
 import { Toaster } from 'sonner';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { NotificationService } from './services/notificationService';
+import { useEffect } from 'react';
 
 const AppContent: React.FC = () => {
-  const { user, loading } = useAuth();
+  const { user, loading, profile } = useAuth();
   const [activeView, setActiveView] = useState('dashboard');
+
+  useEffect(() => {
+    if (user && profile?.notificationsEnabled) {
+      // Notify on app open
+      NotificationService.notifyAppOpen(profile.displayName || 'SmartStock');
+
+      // Notify on visibility change (phone lock/unlock)
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === 'visible') {
+          NotificationService.notifyAppVisible(profile.displayName || 'SmartStock');
+        }
+      };
+
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+
+      // Check for scheduled notifications every minute
+      const interval = setInterval(() => {
+        NotificationService.checkScheduledNotifications(profile.displayName || 'SmartStock');
+      }, 60000); // 1 minute
+
+      return () => {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        clearInterval(interval);
+      };
+    }
+  }, [user, profile?.notificationsEnabled, profile?.displayName]);
 
   if (loading) {
     return (
@@ -61,8 +90,10 @@ const AppContent: React.FC = () => {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }

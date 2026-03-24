@@ -8,7 +8,7 @@ import {
   GoogleAuthProvider
 } from 'firebase/auth';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
-import { auth, db } from '../firebase';
+import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { Package, Mail, Lock, User, ArrowRight, Loader2, Chrome, Phone } from 'lucide-react';
 import { motion } from 'motion/react';
 
@@ -29,6 +29,36 @@ export const Auth: React.FC = () => {
     window.open(whatsappUrl, '_blank');
   };
 
+  const getAuthErrorMessage = (err: any) => {
+    const code = err.code;
+    switch (code) {
+      case 'auth/invalid-credential':
+        return 'Invalid email or password. Please try again.';
+      case 'auth/email-already-in-use':
+        return 'This email is already registered. Please sign in instead.';
+      case 'auth/user-not-found':
+        return 'No account found with this email.';
+      case 'auth/wrong-password':
+        return 'Incorrect password. Please try again.';
+      case 'auth/invalid-email':
+        return 'The email address is not valid.';
+      case 'auth/user-disabled':
+        return 'This account has been disabled.';
+      case 'auth/operation-not-allowed':
+        return 'Email/Password login is not enabled. Please use Google Sign-in.';
+      case 'auth/weak-password':
+        return 'The password is too weak. Please use at least 6 characters.';
+      case 'auth/network-request-failed':
+        return 'Network error. Please check your internet connection.';
+      case 'auth/too-many-requests':
+        return 'Too many failed attempts. Please try again later.';
+      default:
+        // Strip the "Firebase: Error (auth/...)" prefix if it exists
+        const message = err.message || 'An unexpected error occurred.';
+        return message.replace(/^Firebase: Error \(auth\/(.+)\)\.?/, '$1').replace(/-/g, ' ');
+    }
+  };
+
   const handleGoogleSignIn = async () => {
     setLoading(true);
     setError('');
@@ -42,18 +72,7 @@ export const Auth: React.FC = () => {
       try {
         userDoc = await getDoc(doc(db, 'users', user.uid));
       } catch (err: any) {
-        const errInfo = {
-          error: err.message,
-          operationType: 'get',
-          path: `users/${user.uid}`,
-          authInfo: {
-            userId: user.uid,
-            email: user.email,
-            emailVerified: user.emailVerified,
-            isAnonymous: user.isAnonymous,
-          }
-        };
-        console.error('Firestore Error (getDoc):', JSON.stringify(errInfo));
+        handleFirestoreError(err, OperationType.GET, `users/${user.uid}`);
         throw err;
       }
 
@@ -63,7 +82,7 @@ export const Auth: React.FC = () => {
           email: user.email,
           displayName: user.displayName || 'Shop Owner',
           subscriptionStatus: 'free',
-          role: 'user',
+          role: 'shop_owner',
           createdAt: new Date().toISOString(),
           whatsappNumber: '', // Default empty for Google sign-in
         };
@@ -71,18 +90,7 @@ export const Auth: React.FC = () => {
         try {
           await setDoc(doc(db, 'users', user.uid), profileData);
         } catch (err: any) {
-          const errInfo = {
-            error: err.message,
-            operationType: 'create',
-            path: `users/${user.uid}`,
-            authInfo: {
-              userId: user.uid,
-              email: user.email,
-              emailVerified: user.emailVerified,
-              isAnonymous: user.isAnonymous,
-            }
-          };
-          console.error('Firestore Error (setDoc):', JSON.stringify(errInfo));
+          handleFirestoreError(err, OperationType.CREATE, `users/${user.uid}`);
           throw err;
         }
       }
@@ -94,7 +102,7 @@ export const Auth: React.FC = () => {
         // Multiple popups were opened, ignore
         console.log('Sign-in popup request cancelled');
       } else {
-        setError(err.message);
+        setError(getAuthErrorMessage(err));
       }
     } finally {
       setLoading(false);
@@ -121,7 +129,7 @@ export const Auth: React.FC = () => {
           displayName,
           whatsappNumber,
           subscriptionStatus: 'free',
-          role: 'user',
+          role: 'shop_owner',
           createdAt: new Date().toISOString(),
         });
 
@@ -130,13 +138,7 @@ export const Auth: React.FC = () => {
         }
       }
     } catch (err: any) {
-      if (err.code === 'auth/operation-not-allowed') {
-        setError('Email/Password login is not enabled in Firebase Console. Please enable it or use Google Sign-in.');
-      } else if (err.code === 'auth/email-already-in-use') {
-        setError('This email is already registered. Please sign in instead.');
-      } else {
-        setError(err.message);
-      }
+      setError(getAuthErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -244,8 +246,49 @@ export const Auth: React.FC = () => {
               </div>
             </div>
 
-            {error && <p className="text-sm text-rose-600 font-medium">{error}</p>}
-            {message && <p className="text-sm text-emerald-600 font-medium">{message}</p>}
+            {error && (
+              <div className="bg-rose-50 border border-rose-100 p-3 rounded-xl space-y-2">
+                <p className="text-sm text-rose-600 font-medium">{error}</p>
+                {error.includes('already registered') && !isLogin && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsLogin(true);
+                      setError('');
+                    }}
+                    className="text-[10px] font-black text-emerald-700 hover:text-emerald-800 underline uppercase tracking-widest block"
+                  >
+                    Click here to Sign In instead
+                  </button>
+                )}
+                {error.includes('No account found') && isLogin && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsLogin(false);
+                      setError('');
+                    }}
+                    className="text-[10px] font-black text-emerald-700 hover:text-emerald-800 underline uppercase tracking-widest block"
+                  >
+                    Click here to Create an Account
+                  </button>
+                )}
+                {error.includes('Invalid email or password') && isLogin && (
+                  <button
+                    type="button"
+                    onClick={handleResetPassword}
+                    className="text-[10px] font-black text-rose-700 hover:text-rose-800 underline uppercase tracking-widest block"
+                  >
+                    Forgot your password? Click to reset
+                  </button>
+                )}
+              </div>
+            )}
+            {message && (
+              <div className="bg-emerald-50 border border-emerald-100 p-3 rounded-xl">
+                <p className="text-sm text-emerald-600 font-medium">{message}</p>
+              </div>
+            )}
 
             <button
               type="submit"

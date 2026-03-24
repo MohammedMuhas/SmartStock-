@@ -187,7 +187,7 @@ export const Reports: React.FC = () => {
             onClick={handleExportPDF}
             className="flex items-center justify-center gap-2 bg-emerald-600 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all"
           >
-            <Download className="w-4 h-4" /> Download Bill
+            <Download className="w-4 h-4" /> Download Invoice
           </button>
         ) : (
           <button 
@@ -200,7 +200,7 @@ export const Reports: React.FC = () => {
             })} 
             className="flex items-center justify-center gap-2 bg-slate-100 text-slate-400 border border-slate-200 px-6 py-3 rounded-xl font-bold cursor-not-allowed group relative"
           >
-            <Lock className="w-4 h-4" /> Download Bill
+            <Lock className="w-4 h-4" /> Download Invoice
           </button>
         )}
       </div>

@@ -1,18 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { db, storage } from '../firebase';
+import { db, storage, handleFirestoreError, OperationType } from '../firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import { User, Phone, Mail, Save, Loader2, CheckCircle2, Camera, Image as ImageIcon, ArrowLeft } from 'lucide-react';
+import { User, Phone, Mail, Save, Loader2, CheckCircle2, Camera, Image as ImageIcon, ArrowLeft, Bell, BellOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 import imageCompression from 'browser-image-compression';
+import { NotificationService } from '../services/notificationService';
 
 export const Profile: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
   const { profile, user } = useAuth();
   const [displayName, setDisplayName] = useState('');
   const [whatsappNumber, setWhatsappNumber] = useState('');
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -21,13 +23,42 @@ export const Profile: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
   const [hasSynced, setHasSynced] = useState(false);
 
   useEffect(() => {
-    if (profile && !hasSynced) {
-      setDisplayName(profile.displayName || '');
-      setWhatsappNumber(profile.whatsappNumber || '');
-      setImagePreview(profile.photoURL || null);
-      setHasSynced(true);
+    if (profile) {
+      setDisplayName(prev => prev || profile.displayName || '');
+      setWhatsappNumber(prev => prev || profile.whatsappNumber || '');
+      setNotificationsEnabled(profile.notificationsEnabled || false);
+      // Only update image preview from profile if we're not currently picking a new one
+      if (!imageFile) {
+        setImagePreview(profile.photoURL || null);
+      }
     }
-  }, [profile, hasSynced]);
+  }, [profile, imageFile]);
+
+  const toggleNotifications = async () => {
+    const newState = !notificationsEnabled;
+    if (newState) {
+      const granted = await NotificationService.requestPermission();
+      if (!granted) {
+        toast.info('Browser notifications are blocked in this preview, but we will use in-app alerts instead.', {
+          description: 'To get real system-level alerts, please open the app in a new tab.',
+          duration: 5000,
+        });
+      }
+    }
+    setNotificationsEnabled(newState);
+  };
+
+  const testNotification = async () => {
+    if (!notificationsEnabled) {
+      toast.info('Please enable notifications first.');
+      return;
+    }
+    await NotificationService.showNotification('Test Notification', {
+      body: 'If you see this, your notifications are working correctly!',
+      tag: 'test-notification'
+    });
+    toast.success('Test notification sent!');
+  };
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -63,9 +94,13 @@ export const Profile: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       if (imageFile) {
         setIsUploadingLogo(true);
         // Update Firestore to show uploading state globally
-        await updateDoc(doc(db, 'users', user.uid), {
-          isUploading: true
-        });
+        try {
+          await updateDoc(doc(db, 'users', user.uid), {
+            isUploading: true
+          });
+        } catch (error) {
+          handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}`);
+        }
         
         const options = {
           maxSizeMB: 2,
@@ -120,23 +155,36 @@ export const Profile: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
         }
       }
 
-      await updateDoc(doc(db, 'users', user.uid), {
-        displayName,
-        whatsappNumber,
-        photoURL,
-        isUploading: false,
-        updatedAt: new Date().toISOString(),
-      });
+      try {
+        await updateDoc(doc(db, 'users', user.uid), {
+          displayName,
+          whatsappNumber,
+          photoURL,
+          notificationsEnabled,
+          isUploading: false,
+          updatedAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}`);
+      }
       
       toast.success('Profile updated successfully!');
       setImageFile(null); // Clear the file after successful upload
     } catch (error) {
-      console.error('Error updating profile:', error);
-      toast.error('Failed to update profile. Please try again.');
+      // If it's a firestore error already handled, don't show generic toast
+      if (!(error instanceof Error && error.message.startsWith('{'))) {
+        console.error('Error updating profile:', error);
+        toast.error('Failed to update profile. Please try again.');
+      }
+      
       // Clear uploading flag in Firestore on error
-      await updateDoc(doc(db, 'users', user.uid), {
-        isUploading: false
-      }).catch(err => console.error('Error clearing isUploading:', err));
+      try {
+        await updateDoc(doc(db, 'users', user.uid), {
+          isUploading: false
+        });
+      } catch (err) {
+        console.error('Error clearing isUploading:', err);
+      }
     } finally {
       setLoading(false);
     }
@@ -176,23 +224,26 @@ export const Profile: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
               <div 
                 className="w-24 h-24 bg-white rounded-2xl flex items-center justify-center border-2 border-emerald-100 shadow-sm overflow-hidden group-hover:border-emerald-500 transition-all relative"
               >
-                {imagePreview ? (
+                {(profile?.isUploading || loading) ? (
+                  <div className="flex flex-col items-center gap-1">
+                    <Loader2 className="w-6 h-6 text-emerald-600 animate-spin" />
+                    <span className="text-[8px] font-bold text-slate-400 uppercase">Updating...</span>
+                  </div>
+                ) : imagePreview ? (
                   <img 
                     key={imagePreview}
                     src={imagePreview} 
                     alt="Profile" 
-                    className={cn("w-full h-full object-cover", (profile?.isUploading || loading) && "opacity-40")}
+                    className="w-full h-full object-cover"
                     referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = 'https://picsum.photos/seed/shop/200/200';
+                    }}
                   />
                 ) : (
                   <div className="flex flex-col items-center text-slate-400">
                     <ImageIcon className="w-8 h-8 mb-1" />
-                    <span className="text-[10px] font-bold">ADD LOGO</span>
-                  </div>
-                )}
-                {(profile?.isUploading || loading) && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-white/40">
-                    <Loader2 className="w-6 h-6 text-emerald-600 animate-spin" />
+                    <span className="text-[10px] font-bold">UPLOAD LOGO FROM GALLERY</span>
                   </div>
                 )}
                 <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
@@ -276,7 +327,52 @@ export const Profile: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
               </div>
               <p className="text-[10px] text-slate-400 ml-1">Include country code without + (e.g., 91 for India). This is used for sending welcome messages and notifications.</p>
             </div>
+
+            <div className="pt-4 border-t border-slate-100">
+              <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className={cn(
+                    "p-2 rounded-xl",
+                    notificationsEnabled ? "bg-emerald-100 text-emerald-600" : "bg-slate-200 text-slate-500"
+                  )}>
+                    {notificationsEnabled ? <Bell className="w-5 h-5" /> : <BellOff className="w-5 h-5" />}
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-slate-900">Browser Notifications</p>
+                    <p className="text-[10px] text-slate-500">Daily alerts at 9:00 AM and 8:00 PM.</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={toggleNotifications}
+                  className={cn(
+                    "w-12 h-6 rounded-full transition-all relative",
+                    notificationsEnabled ? "bg-emerald-600" : "bg-slate-300"
+                  )}
+                >
+                  <div className={cn(
+                    "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                    notificationsEnabled ? "left-7" : "left-1"
+                  )} />
+                </button>
+              </div>
+              
+              {notificationsEnabled && (
+                <div className="mt-3 px-4">
+                  <button
+                    type="button"
+                    onClick={testNotification}
+                    className="text-[10px] font-black text-emerald-600 hover:text-emerald-700 uppercase tracking-widest flex items-center gap-1 group"
+                  >
+                    <Bell className="w-3 h-3 group-hover:animate-bounce" />
+                    Send Test Notification
+                  </button>
+                </div>
+              )}
+
+            </div>
           </div>
+
 
           <div className="pt-4">
             <button

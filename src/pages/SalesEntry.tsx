@@ -9,7 +9,7 @@ import {
   onSnapshot,
   increment
 } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { Product, Sale } from '../types';
 import { 
@@ -42,6 +42,8 @@ export const SalesEntry: React.FC = () => {
     const q = query(collection(db, 'products'), where('ownerId', '==', user.uid));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setProducts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product)));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'products');
     });
 
     return () => unsubscribe();
@@ -84,15 +86,26 @@ export const SalesEntry: React.FC = () => {
       };
 
       // 1. Add sale record
-      const saleRef = await addDoc(collection(db, 'sales'), saleData);
+      let saleRef;
+      try {
+        saleRef = await addDoc(collection(db, 'sales'), saleData);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.CREATE, 'sales');
+        return; // Stop if sale record fails
+      }
+      
       const recordedSale: Sale = { id: saleRef.id, ...saleData };
       setLastSale(recordedSale);
 
       // 2. Deduct stock and update lastSoldAt
-      await updateDoc(doc(db, 'products', selectedProduct.id), {
-        quantity: increment(-quantitySold),
-        lastSoldAt: new Date().toISOString(),
-      });
+      try {
+        await updateDoc(doc(db, 'products', selectedProduct.id), {
+          quantity: increment(-quantitySold),
+          lastSoldAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        handleFirestoreError(error, OperationType.UPDATE, `products/${selectedProduct.id}`);
+      }
 
       // 3. Low stock alert
       const remainingStock = selectedProduct.quantity - quantitySold;
@@ -113,8 +126,13 @@ export const SalesEntry: React.FC = () => {
         // setQuantitySold(1);
       }, 5000);
     } catch (error) {
+      // This catch block might still be needed for non-firestore errors if any,
+      // but firestore errors are handled inside the try blocks above now.
+      // However, for safety and to catch any unexpected errors:
       console.error('Error recording sale:', error);
-      toast.error('Failed to record sale.');
+      if (!(error instanceof Error && error.message.startsWith('{'))) {
+        toast.error('Failed to record sale.');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -161,14 +179,30 @@ export const SalesEntry: React.FC = () => {
                 key={product.id}
                 onClick={() => setSelectedProduct(product)}
                 className={cn(
-                  "w-full flex items-center justify-between p-4 rounded-2xl border transition-all text-left",
+                  "w-full flex items-center gap-3 p-4 rounded-2xl border transition-all text-left",
                   selectedProduct?.id === product.id 
                     ? "bg-emerald-50 border-emerald-200 ring-1 ring-emerald-200" 
                     : "bg-white border-slate-100 hover:border-slate-200"
                 )}
               >
-                <div>
-                  <p className="font-bold text-slate-900">{product.name}</p>
+                <div className="w-12 h-12 bg-slate-100 rounded-xl flex items-center justify-center text-slate-400 overflow-hidden border border-slate-100 shrink-0">
+                  {product.imageUrl ? (
+                    <img 
+                      key={product.imageUrl}
+                      src={product.imageUrl} 
+                      alt={product.name} 
+                      className="w-full h-full object-cover" 
+                      referrerPolicy="no-referrer" 
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = 'https://picsum.photos/seed/product/200/200';
+                      }}
+                    />
+                  ) : (
+                    <ShoppingCart className="w-5 h-5" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-slate-900 truncate">{product.name}</p>
                   <p className="text-xs text-slate-500">{product.category} • {product.size}</p>
                 </div>
                 <div className="text-right">
@@ -205,8 +239,21 @@ export const SalesEntry: React.FC = () => {
                 className="bg-white rounded-3xl border border-slate-100 shadow-sm p-8 space-y-8"
               >
                 <div className="flex items-center gap-4">
-                  <div className="w-14 h-14 bg-emerald-50 rounded-2xl flex items-center justify-center">
-                    <ShoppingCart className="text-emerald-600 w-7 h-7" />
+                  <div className="w-14 h-14 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-400 overflow-hidden border border-slate-100 shrink-0">
+                    {selectedProduct.imageUrl ? (
+                      <img 
+                        key={selectedProduct.imageUrl}
+                        src={selectedProduct.imageUrl} 
+                        alt={selectedProduct.name} 
+                        className="w-full h-full object-cover" 
+                        referrerPolicy="no-referrer" 
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).src = 'https://picsum.photos/seed/product/200/200';
+                        }}
+                      />
+                    ) : (
+                      <ShoppingCart className="w-7 h-7" />
+                    )}
                   </div>
                   <div>
                     <h2 className="text-xl font-bold text-slate-900">{selectedProduct.name}</h2>
@@ -295,19 +342,19 @@ export const SalesEntry: React.FC = () => {
                       onClick={() => generateInvoicePDF(lastSale, profile)}
                       className="flex items-center justify-center gap-2 py-3 bg-white border border-slate-200 text-slate-700 rounded-xl font-bold hover:bg-slate-50 transition-all text-sm"
                     >
-                      <Download className="w-4 h-4" /> Download Bill
+                      <Download className="w-4 h-4" /> Download Invoice
                     </button>
                     <button
                       onClick={() => {
                         if (sendWhatsAppInvoice(lastSale, profile)) {
-                          toast.success('WhatsApp bill message prepared!');
+                          toast.success('WhatsApp invoice message prepared!');
                         } else {
                           toast.error('Please add your WhatsApp number in Profile Settings first.');
                         }
                       }}
                       className="flex items-center justify-center gap-2 py-3 bg-emerald-50 text-emerald-600 rounded-xl font-bold hover:bg-emerald-100 transition-all text-sm"
                     >
-                      <Phone className="w-4 h-4" /> WhatsApp Bill
+                      <Phone className="w-4 h-4" /> WhatsApp Invoice
                     </button>
                     <button
                       onClick={() => {

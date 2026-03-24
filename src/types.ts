@@ -1,5 +1,5 @@
 export type SubscriptionStatus = 'free' | 'premium';
-export type UserRole = 'user' | 'admin';
+export type UserRole = 'shop_owner' | 'admin';
 
 export interface UserProfile {
   uid: string;
@@ -12,6 +12,7 @@ export interface UserProfile {
   role: UserRole;
   createdAt: string;
   isUploading?: boolean;
+  notificationsEnabled?: boolean;
 }
 
 export interface Product {

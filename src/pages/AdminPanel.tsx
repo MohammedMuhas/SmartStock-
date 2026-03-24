@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { collection, query, onSnapshot, getDocs, where, doc, updateDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { UserProfile } from '../types';
 import { 
@@ -22,7 +22,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 
 export const AdminPanel: React.FC = () => {
-  const { isAdmin, user } = useAuth();
+  const { isAdmin, user, profile } = useAuth();
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -39,6 +39,9 @@ export const AdminPanel: React.FC = () => {
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setUsers(snapshot.docs.map(doc => doc.data() as UserProfile));
       setLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'users');
+      setLoading(false);
     });
 
     return () => unsubscribe();
@@ -48,7 +51,7 @@ export const AdminPanel: React.FC = () => {
     const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
     const randomString = (len: number) => Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
     
-    const email = `user_${randomString(6)}@smartstock.app`;
+    const email = `shop_${randomString(6)}@smartstock.app`;
     const password = randomString(12);
     
     setGeneratedEmail(email);
@@ -61,6 +64,8 @@ export const AdminPanel: React.FC = () => {
   };
 
   if (!isAdmin) {
+    const isAuthorizedEmail = profile?.email === 'mohamedmukasin@gmail.com';
+
     return (
       <div className="flex flex-col items-center justify-center p-12 text-center space-y-6">
         <div className="w-20 h-20 bg-rose-50 rounded-full flex items-center justify-center">
@@ -71,25 +76,31 @@ export const AdminPanel: React.FC = () => {
           <p className="text-slate-500 max-w-xs mx-auto">This area is reserved for platform administrators only.</p>
         </div>
         
-        <div className="pt-8 border-t border-slate-100 w-full max-w-xs">
-          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-4">Secret Access</p>
-          <input 
-            type="password" 
-            placeholder="Enter Admin Key"
-            className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-center"
-            onKeyDown={async (e) => {
-              if (e.key === 'Enter' && user) {
-                const val = (e.target as HTMLInputElement).value;
-                if (val === 'SMART_ADMIN_2026') {
-                  await updateDoc(doc(db, 'users', user.uid), { role: 'admin' });
-                  toast.success('Admin access granted!');
-                } else {
-                  toast.error('Invalid admin key');
+        {isAuthorizedEmail && (
+          <div className="pt-8 border-t border-slate-100 w-full max-w-xs">
+            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-4">Secret Access</p>
+            <input 
+              type="password" 
+              placeholder="Enter Admin Key"
+              className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-center"
+              onKeyDown={async (e) => {
+                if (e.key === 'Enter' && user) {
+                  const val = (e.target as HTMLInputElement).value;
+                  if (val === 'SMART_ADMIN_2026') {
+                    try {
+                      await updateDoc(doc(db, 'users', user.uid), { role: 'admin' });
+                      toast.success('Admin access granted!');
+                    } catch (error) {
+                      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}`);
+                    }
+                  } else {
+                    toast.error('Invalid admin key');
+                  }
                 }
-              }
-            }}
-          />
-        </div>
+              }}
+            />
+          </div>
+        )}
       </div>
     );
   }
@@ -252,7 +263,9 @@ export const AdminPanel: React.FC = () => {
                     </span>
                   </td>
                   <td className="px-6 py-4">
-                    <span className="text-sm font-medium text-slate-600 capitalize">{user.role}</span>
+                    <span className="text-sm font-medium text-slate-600">
+                      {user.role === 'shop_owner' ? 'Shop Owner' : 'Admin'}
+                    </span>
                   </td>
                   <td className="px-6 py-4 text-sm text-slate-500">
                     {user.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'N/A'}

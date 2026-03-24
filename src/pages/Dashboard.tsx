@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { collection, query, where, onSnapshot, orderBy, limit } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { Product, Sale } from '../types';
 import { 
@@ -73,14 +73,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     const unsubProducts = onSnapshot(productsQuery, (snapshot) => {
       setProducts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product)));
       setLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'products');
     });
 
     const unsubRecentSales = onSnapshot(recentSalesQuery, (snapshot) => {
       setRecentSales(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Sale)));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'sales');
     });
 
     const unsubWeeklySales = onSnapshot(weeklySalesQuery, (snapshot) => {
       setWeeklySales(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Sale)));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'sales');
     });
 
     return () => {
@@ -219,7 +225,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
               label: 'Send Now',
               onClick: () => {
                 const todaySalesList = weeklySales.filter(s => new Date(s.soldAt).toDateString() === new Date().toDateString());
-                if (sendWhatsAppDailySummary(todaySalesList, profile)) {
+                if (sendWhatsAppDailySummary(todaySalesList, profile, lowStockItems)) {
                   localStorage.setItem('lastDailySummarySent', today);
                   setLastSummarySent(today);
                   toast.success('Summary prepared!');
@@ -266,28 +272,29 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
 
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
-          {(profile?.photoURL || profile?.isUploading) && (
-            <div className="w-16 h-16 bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden flex-shrink-0 relative">
-              {profile.photoURL ? (
-                <img 
-                  key={profile.photoURL}
-                  src={profile.photoURL} 
-                  alt="Shop Logo" 
-                  className={cn("w-full h-full object-cover", profile.isUploading && "opacity-40")} 
-                  referrerPolicy="no-referrer" 
-                />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center bg-slate-50">
-                  <Package className="w-8 h-8 text-slate-300" />
-                </div>
-              )}
-              {profile.isUploading && (
-                <div className="absolute inset-0 flex items-center justify-center bg-white/40">
-                  <Loader2 className="w-5 h-5 text-emerald-600 animate-spin" />
-                </div>
-              )}
-            </div>
-          )}
+          <div className="w-16 h-16 bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden flex-shrink-0 relative">
+            {profile?.photoURL ? (
+              <img 
+                key={profile.photoURL}
+                src={profile.photoURL} 
+                alt="Shop Logo" 
+                className={cn("w-full h-full object-cover", profile.isUploading && "opacity-40")} 
+                referrerPolicy="no-referrer" 
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = 'https://picsum.photos/seed/shop/200/200';
+                }}
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center bg-slate-50">
+                <Package className="w-8 h-8 text-slate-300" />
+              </div>
+            )}
+            {profile?.isUploading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-white/40">
+                <Loader2 className="w-5 h-5 text-emerald-600 animate-spin" />
+              </div>
+            )}
+          </div>
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Welcome, {profile?.displayName}</h1>
             <p className="text-slate-500">Here's what's happening in your shop today.</p>
@@ -389,7 +396,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
           <button 
             onClick={() => {
               const todaySalesList = weeklySales.filter(s => new Date(s.soldAt).toDateString() === new Date().toDateString());
-              if (sendWhatsAppDailySummary(todaySalesList, profile)) {
+              if (sendWhatsAppDailySummary(todaySalesList, profile, lowStockItems)) {
                 const today = new Date().toDateString();
                 localStorage.setItem('lastDailySummarySent', today);
                 setLastSummarySent(today);
@@ -523,9 +530,29 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
           <div className="divide-y divide-slate-50">
             {lowStockItems.length > 0 ? lowStockItems.slice(0, 5).map(item => (
               <div key={item.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
-                <div>
-                  <p className="font-semibold text-slate-900">{item.name}</p>
-                  <p className="text-xs text-slate-500">{item.category} • {item.size}</p>
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-slate-400 overflow-hidden border border-slate-100 shrink-0 relative">
+                    {item.isUploading ? (
+                      <Loader2 className="w-5 h-5 text-emerald-600 animate-spin" />
+                    ) : item.imageUrl ? (
+                      <img 
+                        key={item.imageUrl}
+                        src={item.imageUrl} 
+                        alt={item.name} 
+                        className="w-full h-full object-cover" 
+                        referrerPolicy="no-referrer" 
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).src = 'https://picsum.photos/seed/product/200/200';
+                        }}
+                      />
+                    ) : (
+                      <Package className="w-5 h-5" />
+                    )}
+                  </div>
+                  <div>
+                    <p className="font-semibold text-slate-900">{item.name}</p>
+                    <p className="text-xs text-slate-500">{item.category} • {item.size}</p>
+                  </div>
                 </div>
                 <div className="text-right flex flex-col items-end gap-1">
                   <p className="text-sm font-bold text-amber-600">{item.quantity} left</p>
@@ -577,9 +604,29 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
             <div className="divide-y divide-slate-50">
               {deadStockItems.length > 0 ? deadStockItems.slice(0, 5).map(item => (
                 <div key={item.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
-                  <div>
-                    <p className="font-semibold text-slate-900">{item.name}</p>
-                    <p className="text-xs text-slate-500">{item.category} • {item.size}</p>
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-slate-400 overflow-hidden border border-slate-100 shrink-0 relative">
+                      {item.isUploading ? (
+                        <Loader2 className="w-5 h-5 text-emerald-600 animate-spin" />
+                      ) : item.imageUrl ? (
+                        <img 
+                          key={item.imageUrl}
+                          src={item.imageUrl} 
+                          alt={item.name} 
+                          className="w-full h-full object-cover" 
+                          referrerPolicy="no-referrer" 
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = 'https://picsum.photos/seed/product/200/200';
+                          }}
+                        />
+                      ) : (
+                        <Package className="w-5 h-5" />
+                      )}
+                    </div>
+                    <div>
+                      <p className="font-semibold text-slate-900">{item.name}</p>
+                      <p className="text-xs text-slate-500">{item.category} • {item.size}</p>
+                    </div>
                   </div>
                   <div className="text-right">
                     <p className="text-sm font-bold text-rose-600">{item.quantity} in stock</p>
@@ -605,18 +652,35 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
             <button onClick={() => onNavigate('reports')} className="text-sm text-emerald-600 font-semibold hover:underline">Full Report</button>
           </div>
           <div className="divide-y divide-slate-50">
-            {recentSales.length > 0 ? recentSales.map(sale => (
-              <div key={sale.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center">
-                    <ArrowUpRight className="text-emerald-600 w-5 h-5" />
+            {recentSales.length > 0 ? recentSales.map(sale => {
+              const product = products.find(p => p.id === sale.productId);
+              return (
+                <div key={sale.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-slate-400 overflow-hidden border border-slate-100 shrink-0 relative">
+                      {product?.isUploading ? (
+                        <Loader2 className="w-5 h-5 text-emerald-600 animate-spin" />
+                      ) : product?.imageUrl ? (
+                        <img 
+                          key={product.imageUrl}
+                          src={product.imageUrl} 
+                          alt={sale.productName} 
+                          className="w-full h-full object-cover" 
+                          referrerPolicy="no-referrer" 
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = 'https://picsum.photos/seed/product/200/200';
+                          }}
+                        />
+                      ) : (
+                        <Package className="w-5 h-5" />
+                      )}
+                    </div>
+                    <div>
+                      <p className="font-semibold text-slate-900">{sale.productName}</p>
+                      <p className="text-xs text-slate-500">{new Date(sale.soldAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-semibold text-slate-900">{sale.productName}</p>
-                    <p className="text-xs text-slate-500">{new Date(sale.soldAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                  </div>
-                </div>
-                <div className="text-right flex items-center gap-3">
+                  <div className="text-right flex items-center gap-3">
                   <div>
                     <p className="font-bold text-slate-900">₹{sale.totalAmount}</p>
                     <p className="text-xs text-slate-400">Qty: {sale.quantitySold}</p>
@@ -628,7 +692,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                         generateInvoicePDF(sale, profile);
                       }}
                       className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
-                      title="Download Bill"
+                      title="Download Invoice"
                     >
                       <Download className="w-3.5 h-3.5" />
                     </button>
@@ -636,20 +700,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                       onClick={(e) => {
                         e.stopPropagation();
                         if (sendWhatsAppInvoice(sale, profile)) {
-                          toast.success('WhatsApp bill message prepared!');
+                          toast.success('WhatsApp invoice message prepared!');
                         } else {
                           toast.error('Please add your WhatsApp number in Profile Settings first.');
                         }
                       }}
                       className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
-                      title="WhatsApp Bill"
+                      title="WhatsApp Invoice"
                     >
                       <PhoneIcon className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
               </div>
-            )) : (
+            );
+          }) : (
               <div className="p-12 text-center">
                 <p className="text-slate-400 text-sm">No sales recorded yet.</p>
               </div>

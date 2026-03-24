@@ -109,13 +109,7 @@ export const Subscription: React.FC = () => {
   const handleUpgrade = async () => {
     if (!user) return;
 
-    if (isDummyKey) {
-      await completeMockUpgrade();
-      return;
-    }
-
     const razorpayKey = import.meta.env.VITE_RAZORPAY_KEY_ID;
-    console.log('Razorpay Key:', razorpayKey ? 'Configured' : 'Missing');
     
     if (!razorpayKey || razorpayKey === 'rzp_test_dummykey') {
       toast.error('Payment gateway not configured.', {
@@ -132,83 +126,32 @@ export const Subscription: React.FC = () => {
     }
 
     setLoading(true);
-    setLoadingTime(0);
-
-    const timeoutId = setTimeout(() => {
-      setLoading(false);
-      toast.error('Payment gateway timed out.', {
-        description: 'The window failed to open. This is often blocked by the browser. Please use the "Open in New Tab" button below.',
-        duration: 10000,
-      });
-    }, 15000);
 
     try {
-      // 1. Create Order on Backend
-      const orderResponse = await fetch('/api/razorpay/create-order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: 29900 }) // ₹299 in paise
-      });
-
-      const orderData = await orderResponse.json();
-
-      if (!orderResponse.ok) {
-        throw new Error(orderData.details || orderData.error || 'Failed to create order on server');
-      }
-
-      // Handle Mock Order from Server (Fallback)
-      if (orderData.isMock) {
-        clearTimeout(timeoutId);
-        if (orderData.warning) {
-          toast.warning('Authentication Failed', {
-            description: orderData.warning,
-            duration: 8000
-          });
-        }
-        await completeMockUpgrade();
-        return;
-      }
-
       const options = {
         key: razorpayKey,
-        amount: orderData.amount,
-        currency: orderData.currency,
-        name: "SmartStock Prime",
-        description: "Monthly Subscription",
-        order_id: orderData.id,
+        amount: 29900, // ₹299 in paise
+        currency: "INR",
+        name: "SmartStock",
+        description: "Premium Plan",
         handler: async function (response: any) {
-          clearTimeout(timeoutId);
+          alert("Payment Successful");
+          localStorage.setItem("isPremium", "true");
+          
+          // Update Firestore for app consistency
           try {
-            // 2. Verify Payment on Backend
-            const verifyResponse = await fetch('/api/razorpay/verify-payment', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                razorpay_order_id: response.razorpay_order_id,
-                razorpay_payment_id: response.razorpay_payment_id,
-                razorpay_signature: response.razorpay_signature,
-                userId: user.uid
-              })
+            await updateDoc(doc(db, 'users', user.uid), {
+              subscriptionStatus: 'premium',
+              upgradedAt: new Date().toISOString()
             });
-
-            if (!verifyResponse.ok) {
-              throw new Error('Payment verification failed on server');
-            }
-
-            toast.success('Payment Received! Welcome to Prime.', {
-              description: `Payment ID: ${response.razorpay_payment_id}`,
-              duration: 5000,
-            });
-          } catch (error) {
-            console.error('Error verifying payment:', error);
-            toast.error('Failed to verify payment. Please contact support.');
-          } finally {
-            setLoading(false);
+          } catch (err) {
+            console.error('Firestore update failed:', err);
           }
+          
+          window.location.href = '/dashboard';
         },
         modal: {
           ondismiss: function() {
-            clearTimeout(timeoutId);
             setLoading(false);
           }
         },
@@ -224,11 +167,8 @@ export const Subscription: React.FC = () => {
       const rzp = new window.Razorpay(options);
       rzp.open();
     } catch (err: any) {
-      clearTimeout(timeoutId);
       console.error('Razorpay failed to open:', err);
-      toast.error('Could not open payment gateway.', {
-        description: err.message || 'Check your internet connection or console for errors.',
-      });
+      toast.error('Could not open payment gateway.');
       setLoading(false);
     }
   };
@@ -273,7 +213,7 @@ export const Subscription: React.FC = () => {
         'Standard support'
       ],
       current: profile?.subscriptionStatus === 'free',
-      buttonText: profile?.subscriptionStatus === 'premium' ? 'Downgrade to Free' : 'Current Plan',
+      buttonText: profile?.subscriptionStatus === 'free' ? 'Current Plan' : 'Downgrade to Free',
       buttonAction: profile?.subscriptionStatus === 'premium' ? handleDowngrade : null,
     },
     {
@@ -431,6 +371,7 @@ export const Subscription: React.FC = () => {
               </div>
 
               <button
+                id={plan.name === 'Prime' ? 'payBtn' : undefined}
                 onClick={() => plan.buttonAction?.()}
                 disabled={!plan.buttonAction || (loading && plan.name === 'Prime')}
                 className={cn(

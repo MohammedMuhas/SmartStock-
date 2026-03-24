@@ -41,7 +41,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeView, onViewChan
     { id: 'profile', label: 'Profile Settings', icon: UserIcon },
   ];
 
-  if (isAdmin) {
+  if (isAdmin || profile?.email === 'mohamedmukasin@gmail.com') {
     navItems.push({ id: 'admin', label: 'Admin Panel', icon: ShieldCheck });
   }
 
@@ -115,10 +115,14 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeView, onViewChan
               <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center border border-slate-200 overflow-hidden shadow-sm relative">
                 {profile?.photoURL ? (
                   <img 
+                    key={profile.photoURL}
                     src={profile.photoURL} 
                     alt="Logo" 
                     className={cn("w-full h-full object-cover", profile.isUploading && "opacity-40")} 
                     referrerPolicy="no-referrer" 
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = 'https://picsum.photos/seed/shop/200/200';
+                    }}
                   />
                 ) : (
                   <UserIcon className="w-5 h-5 text-slate-400" />

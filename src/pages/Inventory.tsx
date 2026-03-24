@@ -13,7 +13,7 @@ import {
 } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import imageCompression from 'browser-image-compression';
-import { db, storage } from '../firebase';
+import { db, storage, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { Product } from '../types';
 import { cn } from '../lib/utils';
@@ -88,6 +88,13 @@ export const Inventory: React.FC = () => {
         return dateB - dateA;
       });
       setProducts(fetchedProducts);
+      setLoading(false);
+    }, (error) => {
+      try {
+        handleFirestoreError(error, OperationType.GET, 'products');
+      } catch (e) {
+        console.error("Products fetch error handled:", e);
+      }
       setLoading(false);
     });
 
@@ -203,15 +210,23 @@ export const Inventory: React.FC = () => {
         try {
           // Set uploading state in Firestore for real-time feedback
           if (editingProduct) {
-            await updateDoc(productRef, { isUploading: true });
+            try {
+              await updateDoc(productRef, { isUploading: true });
+            } catch (error) {
+              handleFirestoreError(error, OperationType.UPDATE, `products/${productRef.id}`);
+            }
           } else {
             // For new products, create the document immediately with isUploading: true
             // so the user sees it in the list with a loading state
-            await setDoc(productRef, {
-              ...productData,
-              isUploading: true,
-              createdAt: now,
-            });
+            try {
+              await setDoc(productRef, {
+                ...productData,
+                isUploading: true,
+                createdAt: now,
+              });
+            } catch (error) {
+              handleFirestoreError(error, OperationType.CREATE, `products/${productRef.id}`);
+            }
           }
 
           // Compress image
@@ -268,16 +283,24 @@ export const Inventory: React.FC = () => {
 
       // 3. Save final product details
       if (editingProduct) {
-        await updateDoc(productRef, {
-          ...productData,
-        });
-        toast.success('Product updated successfully!');
+        try {
+          await updateDoc(productRef, {
+            ...productData,
+          });
+          toast.success('Product updated successfully!');
+        } catch (error) {
+          handleFirestoreError(error, OperationType.UPDATE, `products/${productRef.id}`);
+        }
       } else {
-        await setDoc(productRef, {
-          ...productData,
-          createdAt: now,
-        });
-        toast.success('Product added successfully!');
+        try {
+          await setDoc(productRef, {
+            ...productData,
+            createdAt: now,
+          });
+          toast.success('Product added successfully!');
+        } catch (error) {
+          handleFirestoreError(error, OperationType.CREATE, `products/${productRef.id}`);
+        }
       }
 
       setIsModalOpen(false);
@@ -305,8 +328,7 @@ export const Inventory: React.FC = () => {
       await deleteDoc(doc(db, 'products', productToDelete));
       toast.success('Product deleted successfully!');
     } catch (error) {
-      console.error('Error deleting product:', error);
-      toast.error('Failed to delete product.');
+      handleFirestoreError(error, OperationType.DELETE, `products/${productToDelete}`);
     } finally {
       setProductToDelete(null);
     }
@@ -423,12 +445,14 @@ export const Inventory: React.FC = () => {
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
                       <div className="w-12 h-12 bg-slate-100 rounded-xl flex items-center justify-center text-slate-500 overflow-hidden border border-slate-200 shrink-0 relative">
-                        {product.imageUrl ? (
+                        {product.isUploading ? (
+                          <Loader2 className="w-5 h-5 text-emerald-600 animate-spin" />
+                        ) : product.imageUrl ? (
                           <img 
                             key={product.imageUrl}
                             src={product.imageUrl} 
                             alt={product.name} 
-                            className={cn("w-full h-full object-cover", product.isUploading && "opacity-40")} 
+                            className="w-full h-full object-cover" 
                             referrerPolicy="no-referrer"
                             onError={(e) => {
                               (e.target as HTMLImageElement).src = 'https://picsum.photos/seed/error/200/200';
@@ -436,11 +460,6 @@ export const Inventory: React.FC = () => {
                           />
                         ) : (
                           <Package className="w-6 h-6" />
-                        )}
-                        {product.isUploading && (
-                          <div className="absolute inset-0 flex items-center justify-center bg-white/40">
-                            <Loader2 className="w-5 h-5 text-emerald-600 animate-spin" />
-                          </div>
                         )}
                       </div>
                       <div className="min-w-0">
@@ -676,29 +695,52 @@ export const Inventory: React.FC = () => {
 
               <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
                 <div className="flex flex-col items-center justify-center mb-6">
-                  <div className="relative group">
-                    <div className="w-32 h-32 bg-slate-50 border-2 border-dashed border-slate-200 rounded-3xl flex items-center justify-center overflow-hidden transition-all group-hover:border-emerald-500 relative">
-                      {imagePreview ? (
-                        <img key={imagePreview} src={imagePreview} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  <div className="relative">
+                    <div className="w-40 h-40 bg-slate-50 border-2 border-dashed border-slate-200 rounded-[2rem] flex items-center justify-center overflow-hidden transition-all hover:border-emerald-500 relative group">
+                      {submitting ? (
+                        <div className="flex flex-col items-center gap-2">
+                          <Loader2 className="w-10 h-10 animate-spin text-emerald-600" />
+                          <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Uploading...</p>
+                        </div>
+                      ) : imagePreview ? (
+                        <>
+                          <img key={imagePreview} src={imagePreview} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" onError={(e) => { (e.target as HTMLImageElement).src = 'https://picsum.photos/seed/product/200/200'; }} />
+                          <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <Upload className="w-8 h-8 text-white" />
+                          </div>
+                        </>
                       ) : (
-                        <div className="text-center">
-                          <ImageIcon className="w-8 h-8 text-slate-300 mx-auto mb-1" />
-                          <p className="text-[10px] text-slate-400 font-bold uppercase">Product Image</p>
+                        <div className="text-center p-4">
+                          <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                            <Upload className="w-6 h-6 text-emerald-600" />
+                          </div>
+                          <p className="text-sm font-bold text-slate-900">Upload Image from Gallery</p>
+                          <p className="text-[10px] text-slate-400 font-medium mt-1">Tap to take a picture or upload</p>
                         </div>
                       )}
-                      
-                      {submitting && (
-                        <div className="absolute inset-0 bg-white/60 backdrop-blur-[2px] flex items-center justify-center">
-                          <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
-                        </div>
-                      )}
+                      <input 
+                        type="file" 
+                        className="absolute inset-0 opacity-0 cursor-pointer" 
+                        accept="image/*" 
+                        capture="environment"
+                        onChange={handleImageChange} 
+                        disabled={submitting}
+                      />
                     </div>
-                    <label className="absolute inset-0 cursor-pointer flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity rounded-3xl">
-                      <Upload className="w-6 h-6 text-white" />
-                      <input type="file" className="hidden" accept="image/*" onChange={handleImageChange} />
-                    </label>
+                    {imagePreview && !submitting && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setImageFile(null);
+                          setImagePreview(null);
+                        }}
+                        className="absolute -top-2 -right-2 w-8 h-8 bg-rose-500 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-rose-600 transition-colors"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
-                  <p className="text-[10px] text-slate-400 mt-2 font-medium">Click to upload product photo</p>
                 </div>
 
                 <div className="space-y-1">
