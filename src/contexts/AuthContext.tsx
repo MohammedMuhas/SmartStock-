@@ -12,7 +12,8 @@ import {
 } from 'firebase/auth';
 import { doc, onSnapshot, setDoc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
-import { UserProfile } from '../types';
+import { UserProfile, OperationType } from '../types';
+import { handleFirestoreError } from '../lib/firestore-errors';
 
 interface AuthContextType {
   user: User | null;

@@ -201,15 +201,7 @@ export const Auth: React.FC = () => {
                     Click here to Create an Account
                   </button>
                 )}
-                {error.includes('Invalid email or password') && isLogin && (
-                  <button
-                    type="button"
-                    onClick={handleResetPassword}
-                    className="text-[10px] font-black text-rose-700 hover:text-rose-800 underline uppercase tracking-widest block"
-                  >
-                    Forgot your password? Click to reset
-                  </button>
-                )}
+
               </div>
             )}
             {message && (
@@ -257,14 +249,7 @@ export const Auth: React.FC = () => {
             >
               {isLogin ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
             </button>
-            {isLogin && (
-              <button
-                onClick={handleResetPassword}
-                className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
-              >
-                Forgot password?
-              </button>
-            )}
+
           </div>
         </div>
       </motion.div>
