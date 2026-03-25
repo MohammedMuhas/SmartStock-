@@ -1,15 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  collection, 
-  addDoc, 
-  updateDoc, 
-  doc, 
-  query, 
-  where, 
-  onSnapshot,
-  increment
-} from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { Product, Sale } from '../types';
 import { 
@@ -19,15 +8,23 @@ import {
   Minus, 
   CheckCircle2, 
   Loader2,
-  AlertCircle
+  AlertCircle,
+  ArrowLeft
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { generateInvoicePDF, sendWhatsAppInvoice } from '../utils/billing';
 import { toast } from 'sonner';
 import { Download, Phone } from 'lucide-react';
+import { collection, addDoc, updateDoc, doc, onSnapshot, query, where } from 'firebase/firestore';
+import { db } from '../firebase';
+import { handleFirestoreError } from '../lib/firestore-errors';
+import { OperationType } from '../types';
 
 export const SalesEntry: React.FC = () => {
   const { user, profile } = useAuth();
+  const navigate = useNavigate();
   const [products, setProducts] = useState<Product[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -39,12 +36,18 @@ export const SalesEntry: React.FC = () => {
   useEffect(() => {
     if (!user) return;
 
-    const q = query(collection(db, 'products'), where('ownerId', '==', user.uid));
+    const q = query(
+      collection(db, 'products'),
+      where('ownerId', '==', user.uid)
+    );
+
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      setProducts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product)));
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, 'products');
-    });
+      const productsData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as Product));
+      setProducts(productsData);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'products'));
 
     return () => unsubscribe();
   }, [user]);
@@ -57,7 +60,6 @@ export const SalesEntry: React.FC = () => {
     }
 
     setSubmitting(true);
-    // Loading toast removed as per user request
     try {
       const basePrice = selectedProduct.discountPrice && selectedProduct.discountPrice > 0 
         ? selectedProduct.discountPrice 
@@ -71,7 +73,7 @@ export const SalesEntry: React.FC = () => {
       const taxAmount = (subtotal * productTaxRate) / 100;
       const totalAmount = subtotal + taxAmount;
 
-      const saleData = {
+      const saleData: Omit<Sale, 'id'> = {
         productId: selectedProduct.id,
         productName: selectedProduct.name,
         quantitySold,
@@ -86,27 +88,16 @@ export const SalesEntry: React.FC = () => {
       };
 
       // 1. Add sale record
-      let saleRef;
-      try {
-        saleRef = await addDoc(collection(db, 'sales'), saleData);
-      } catch (error) {
-        handleFirestoreError(error, OperationType.CREATE, 'sales');
-        return; // Stop if sale record fails
-      }
-      
-      const recordedSale: Sale = { id: saleRef.id, ...saleData };
-      setLastSale(recordedSale);
+      const saleRef = await addDoc(collection(db, 'sales'), saleData);
+      setLastSale({ id: saleRef.id, ...saleData });
 
       // 2. Deduct stock and update lastSoldAt
-      try {
-        await updateDoc(doc(db, 'products', selectedProduct.id), {
-          quantity: increment(-quantitySold),
-          lastSoldAt: new Date().toISOString(),
-        });
-      } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, `products/${selectedProduct.id}`);
-      }
-
+      const productRef = doc(db, 'products', selectedProduct.id);
+      await updateDoc(productRef, {
+        quantity: selectedProduct.quantity - quantitySold,
+        lastSoldAt: new Date().toISOString(),
+      });
+      
       // 3. Low stock alert
       const remainingStock = selectedProduct.quantity - quantitySold;
       if (remainingStock < 5) {
@@ -118,21 +109,8 @@ export const SalesEntry: React.FC = () => {
 
       setSuccess(true);
       toast.success('Sale recorded successfully!');
-      
-      // Don't reset immediately to allow bill download
-      setTimeout(() => {
-        // setSuccess(false);
-        // setSelectedProduct(null);
-        // setQuantitySold(1);
-      }, 5000);
     } catch (error) {
-      // This catch block might still be needed for non-firestore errors if any,
-      // but firestore errors are handled inside the try blocks above now.
-      // However, for safety and to catch any unexpected errors:
-      console.error('Error recording sale:', error);
-      if (!(error instanceof Error && error.message.startsWith('{'))) {
-        toast.error('Failed to record sale.');
-      }
+      handleFirestoreError(error, OperationType.CREATE, 'sales');
     } finally {
       setSubmitting(false);
     }
@@ -150,9 +128,17 @@ export const SalesEntry: React.FC = () => {
 
   return (
     <div className="max-w-4xl mx-auto space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Record Daily Sale</h1>
-        <p className="text-slate-500">Select a product and enter the quantity sold.</p>
+      <div className="flex items-center gap-4">
+        <button 
+          onClick={() => navigate('/dashboard')}
+          className="p-2 hover:bg-slate-100 rounded-full transition-colors md:hidden"
+        >
+          <ArrowLeft className="w-6 h-6 text-slate-600" />
+        </button>
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Record Daily Sale</h1>
+          <p className="text-slate-500">Select a product and enter the quantity sold.</p>
+        </div>
       </div>
 
       <AnimatePresence>
@@ -188,14 +174,10 @@ export const SalesEntry: React.FC = () => {
                 <div className="w-12 h-12 bg-slate-100 rounded-xl flex items-center justify-center text-slate-400 overflow-hidden border border-slate-100 shrink-0">
                   {product.imageUrl ? (
                     <img 
-                      key={product.imageUrl}
                       src={product.imageUrl} 
                       alt={product.name} 
                       className="w-full h-full object-cover" 
                       referrerPolicy="no-referrer" 
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).src = 'https://picsum.photos/seed/product/200/200';
-                      }}
                     />
                   ) : (
                     <ShoppingCart className="w-5 h-5" />
@@ -242,14 +224,10 @@ export const SalesEntry: React.FC = () => {
                   <div className="w-14 h-14 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-400 overflow-hidden border border-slate-100 shrink-0">
                     {selectedProduct.imageUrl ? (
                       <img 
-                        key={selectedProduct.imageUrl}
                         src={selectedProduct.imageUrl} 
                         alt={selectedProduct.name} 
                         className="w-full h-full object-cover" 
                         referrerPolicy="no-referrer" 
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).src = 'https://picsum.photos/seed/product/200/200';
-                        }}
                       />
                     ) : (
                       <ShoppingCart className="w-7 h-7" />
@@ -385,6 +363,3 @@ export const SalesEntry: React.FC = () => {
   );
 };
 
-function cn(...inputs: any[]) {
-  return inputs.filter(Boolean).join(' ');
-}

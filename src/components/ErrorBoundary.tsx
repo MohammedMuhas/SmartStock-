@@ -31,20 +31,7 @@ export class ErrorBoundary extends (React.Component as any) {
 
   public render() {
     if (this.state.hasError) {
-      let errorMessage = 'An unexpected error occurred.';
-      let isFirestoreError = false;
-
-      try {
-        if (this.state.error?.message) {
-          const parsed = JSON.parse(this.state.error.message);
-          if (parsed.error && parsed.operationType) {
-            errorMessage = `Firestore Error: ${parsed.error} (${parsed.operationType} on ${parsed.path})`;
-            isFirestoreError = true;
-          }
-        }
-      } catch (e) {
-        errorMessage = this.state.error?.message || errorMessage;
-      }
+      let errorMessage = this.state.error?.message || 'An unexpected error occurred.';
 
       return (
         <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
@@ -56,9 +43,7 @@ export class ErrorBoundary extends (React.Component as any) {
             <div className="space-y-2">
               <h1 className="text-2xl font-bold text-slate-900">Something went wrong</h1>
               <p className="text-slate-500 text-sm">
-                {isFirestoreError 
-                  ? "You don't have permission to perform this action or the data is invalid."
-                  : "We encountered an error while processing your request."}
+                We encountered an error while processing your request.
               </p>
             </div>
 

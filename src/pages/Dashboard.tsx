@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { collection, query, where, onSnapshot, orderBy, limit } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import { Link, Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Product, Sale } from '../types';
 import { 
@@ -13,7 +12,12 @@ import {
   ArrowDownRight,
   Lock,
   Phone,
-  Loader2
+  Loader2,
+  Zap,
+  ShieldCheck,
+  BarChart3,
+  MessageSquare,
+  Infinity
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -32,19 +36,20 @@ import {
   AreaChart,
   Area
 } from 'recharts';
+import { collection, query, where, onSnapshot, orderBy, limit } from 'firebase/firestore';
+import { db } from '../firebase';
+import { handleFirestoreError } from '../lib/firestore-errors';
+import { OperationType } from '../types';
 
-interface DashboardProps {
-  onNavigate: (view: string) => void;
-}
-
-export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
+export const Dashboard: React.FC = () => {
   const { user, profile } = useAuth();
+
   const [products, setProducts] = useState<Product[]>([]);
   const [recentSales, setRecentSales] = useState<Sale[]>([]);
+  const [todaySalesList, setTodaySalesList] = useState<Sale[]>([]);
   const [weeklySales, setWeeklySales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
-
-  const [lastSummarySent, setLastSummarySent] = useState<string | null>(localStorage.getItem('lastDailySummarySent'));
+  const [isSummarySent, setIsSummarySent] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -54,47 +59,85 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
       where('ownerId', '==', user.uid)
     );
 
-    const recentSalesQuery = query(
+    const unsubscribeProducts = onSnapshot(productsQuery, (snapshot) => {
+      const productsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+      setProducts(productsData);
+      setLoading(false);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'products'));
+
+    const salesQuery = query(
       collection(db, 'sales'),
       where('ownerId', '==', user.uid),
       orderBy('soldAt', 'desc'),
-      limit(5)
+      limit(50)
     );
 
-    // Fetch sales for the last 7 days for the chart
-    const sevenDaysAgo = subDays(new Date(), 7).toISOString();
-    const weeklySalesQuery = query(
-      collection(db, 'sales'),
-      where('ownerId', '==', user.uid),
-      where('soldAt', '>=', sevenDaysAgo),
-      orderBy('soldAt', 'asc')
-    );
+    const unsubscribeSales = onSnapshot(salesQuery, (snapshot) => {
+      const salesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Sale));
+      
+      const today = startOfDay(new Date());
+      const todaySales = salesData.filter(s => new Date(s.soldAt) >= today);
+      setTodaySalesList(todaySales);
 
-    const unsubProducts = onSnapshot(productsQuery, (snapshot) => {
-      setProducts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product)));
-      setLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, 'products');
-    });
+      const recent = salesData.slice(0, 5);
+      setRecentSales(recent);
 
-    const unsubRecentSales = onSnapshot(recentSalesQuery, (snapshot) => {
-      setRecentSales(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Sale)));
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, 'sales');
-    });
-
-    const unsubWeeklySales = onSnapshot(weeklySalesQuery, (snapshot) => {
-      setWeeklySales(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Sale)));
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, 'sales');
-    });
+      const sevenDaysAgo = subDays(new Date(), 7);
+      const weekly = salesData.filter(s => new Date(s.soldAt) >= sevenDaysAgo);
+      setWeeklySales(weekly);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'sales'));
 
     return () => {
-      unsubProducts();
-      unsubRecentSales();
-      unsubWeeklySales();
+      unsubscribeProducts();
+      unsubscribeSales();
     };
   }, [user]);
+
+  useEffect(() => {
+    // Summary sent check logic removed as we'll rely on state/firestore in the future
+    // For now, we'll just reset it on mount or keep it in memory
+    setIsSummarySent(false);
+  }, []);
+
+  const handleSendDailySummary = () => {
+    if (todaySalesList.length === 0) {
+      toast.info('No sales recorded today to send a summary.');
+      return;
+    }
+    const lowStockItems = products.filter(p => p.quantity < 5);
+    if (sendWhatsAppDailySummary(todaySalesList, profile, lowStockItems)) {
+      setIsSummarySent(true);
+      toast.success('Summary prepared!');
+    } else {
+      toast.error('Please add your WhatsApp number in Profile Settings first.');
+    }
+  };
+
+  useEffect(() => {
+    if (profile?.subscriptionStatus === 'premium' && profile?.notificationsEnabled) {
+      const checkDailySummary = () => {
+        const now = new Date();
+        const hours = now.getHours();
+        const minutes = now.getMinutes();
+        
+        if (hours === 21 && minutes === 40) {
+          if (!isSummarySent && todaySalesList.length > 0) {
+            toast.info('Time for your daily summary!', {
+              description: 'Click to send your shop summary to WhatsApp.',
+              action: {
+                label: 'Send Now',
+                onClick: () => handleSendDailySummary()
+              },
+              duration: 10000
+            });
+          }
+        }
+      };
+
+      const interval = setInterval(checkDailySummary, 60000);
+      return () => clearInterval(interval);
+    }
+  }, [profile, todaySalesList]);
 
   const totalProducts = products.length;
   const lowStockItems = products.filter(p => p.quantity < 5);
@@ -206,44 +249,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     }
   }, [loading, lowStockItems.length]);
 
-  // 9:40 PM Daily Summary Reminder Logic
-  useEffect(() => {
-    const checkTime = () => {
-      const now = new Date();
-      const currentHour = now.getHours();
-      const currentMinute = now.getMinutes();
-      
-      // Check if it's 9:40 PM (21:40)
-      if (currentHour === 21 && currentMinute === 40 && profile?.subscriptionStatus === 'premium') {
-        const lastSent = localStorage.getItem('lastDailySummarySent');
-        const today = new Date().toDateString();
-        
-        if (lastSent !== today) {
-          toast.info("It's 9:40 PM! Time to send your Daily Sales Summary.", {
-            description: "Click below to open WhatsApp and send today's report.",
-            action: {
-              label: 'Send Now',
-              onClick: () => {
-                const todaySalesList = weeklySales.filter(s => new Date(s.soldAt).toDateString() === new Date().toDateString());
-                if (sendWhatsAppDailySummary(todaySalesList, profile, lowStockItems)) {
-                  localStorage.setItem('lastDailySummarySent', today);
-                  setLastSummarySent(today);
-                  toast.success('Summary prepared!');
-                } else {
-                  toast.error('Please add your WhatsApp number in Profile Settings first.');
-                }
-              }
-            },
-            duration: 0, // Keep it visible until action is taken
-          });
-        }
-      }
-    };
-
-    const interval = setInterval(checkTime, 60000); // Check every minute
-    return () => clearInterval(interval);
-  }, [weeklySales, profile]);
-
   return (
     <div className="space-y-8">
       {profile && profile.subscriptionStatus === 'premium' && !profile.whatsappNumber && (
@@ -261,58 +266,62 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
               <p className="text-sm text-slate-600">Get important notifications and welcome messages on WhatsApp.</p>
             </div>
           </div>
-          <button 
-            onClick={() => onNavigate('profile')}
+          <Link 
+            to="/profile"
             className="bg-emerald-600 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all whitespace-nowrap"
           >
             Add Number Now
-          </button>
+          </Link>
         </motion.div>
       )}
 
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <div className="w-16 h-16 bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden flex-shrink-0 relative">
-            {profile?.photoURL ? (
-              <img 
-                key={profile.photoURL}
-                src={profile.photoURL} 
-                alt="Shop Logo" 
-                className={cn("w-full h-full object-cover", profile.isUploading && "opacity-40")} 
-                referrerPolicy="no-referrer" 
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = 'https://picsum.photos/seed/shop/200/200';
-                }}
-              />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center bg-slate-50">
-                <Package className="w-8 h-8 text-slate-300" />
-              </div>
-            )}
-            {profile?.isUploading && (
-              <div className="absolute inset-0 flex items-center justify-center bg-white/40">
-                <Loader2 className="w-5 h-5 text-emerald-600 animate-spin" />
-              </div>
-            )}
+      {/* Welcome Section */}
+      <div className="bg-white rounded-[2.5rem] p-8 border border-slate-100 shadow-sm">
+        <div className="flex flex-col md:flex-row items-center justify-between gap-8">
+          <div className="flex items-center gap-6">
+            <div className="w-20 h-20 bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden flex-shrink-0 relative">
+              {profile?.photoURL ? (
+                <img 
+                  key={profile.photoURL}
+                  src={profile.photoURL} 
+                  alt="Shop Logo" 
+                  className={cn("w-full h-full object-cover", profile.isUploading && "opacity-40")} 
+                  referrerPolicy="no-referrer" 
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = 'https://picsum.photos/seed/shop/200/200';
+                  }}
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center bg-slate-50">
+                  <Package className="w-8 h-8 text-slate-300" />
+                </div>
+              )}
+              {profile?.isUploading && (
+                <div className="absolute inset-0 flex items-center justify-center bg-white/40">
+                  <Loader2 className="w-5 h-5 text-emerald-600 animate-spin" />
+                </div>
+              )}
+            </div>
+            <div>
+              <h1 className="text-3xl font-black text-slate-900 tracking-tight">Welcome back, {profile?.displayName}!</h1>
+              <p className="text-slate-500 font-medium">Manage your inventory and track your sales with ease.</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">Welcome, {profile?.displayName}</h1>
-            <p className="text-slate-500">Here's what's happening in your shop today.</p>
+
+          <div className="flex gap-4 w-full md:w-auto">
+            <Link 
+              to="/inventory"
+              className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-emerald-600 text-white px-6 py-3 rounded-2xl font-bold shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all"
+            >
+              <Plus className="w-5 h-5" /> Add Product
+            </Link>
+            <Link 
+              to="/sales"
+              className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-white text-slate-900 border border-slate-200 px-6 py-3 rounded-2xl font-bold hover:bg-slate-50 transition-all"
+            >
+              <Plus className="w-5 h-5" /> New Sale
+            </Link>
           </div>
-        </div>
-        <div className="flex gap-3">
-          <button 
-            onClick={() => onNavigate('inventory')}
-            className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-xl font-semibold shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all"
-          >
-            <Plus className="w-4 h-4" /> Add Product
-          </button>
-          <button 
-            onClick={() => onNavigate('sales')}
-            className="flex items-center gap-2 bg-white text-slate-900 border border-slate-200 px-4 py-2 rounded-xl font-semibold hover:bg-slate-50 transition-all"
-          >
-            <Plus className="w-4 h-4" /> New Sale
-          </button>
         </div>
       </div>
 
@@ -362,13 +371,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: 0.4 + idx * 0.05 }}
-            onClick={() => onNavigate(action.view)}
+            onClick={() => {}}
             className="flex flex-col items-center gap-3 p-4 bg-white rounded-3xl border border-slate-100 shadow-sm hover:bg-slate-50 transition-all group"
           >
-            <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-lg transition-transform group-hover:rotate-12", action.color)}>
-              <action.icon className="w-6 h-6" />
-            </div>
-            <span className="text-sm font-bold text-slate-700">{action.label}</span>
+            <Link to={action.view === 'profile' ? '/profile' : `/${action.view}`} className="flex flex-col items-center gap-3">
+              <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-lg transition-transform group-hover:rotate-12", action.color)}>
+                <action.icon className="w-6 h-6" />
+              </div>
+              <span className="text-sm font-bold text-slate-700">{action.label}</span>
+            </Link>
           </motion.button>
         ))}
       </div>
@@ -386,7 +397,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
           <div>
             <h2 className="text-xl font-bold text-slate-900">Daily Sales Summary</h2>
             <p className="text-sm text-slate-500">
-              {lastSummarySent === new Date().toDateString() 
+              {isSummarySent 
                 ? '✅ Summary already sent for today.' 
                 : 'Scheduled for automatic WhatsApp reminder at 9:40 PM daily.'}
             </p>
@@ -394,25 +405,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         </div>
         <div className="flex items-center gap-3 w-full md:w-auto">
           <button 
-            onClick={() => {
-              const todaySalesList = weeklySales.filter(s => new Date(s.soldAt).toDateString() === new Date().toDateString());
-              if (sendWhatsAppDailySummary(todaySalesList, profile, lowStockItems)) {
-                const today = new Date().toDateString();
-                localStorage.setItem('lastDailySummarySent', today);
-                setLastSummarySent(today);
-                toast.success('Daily summary message prepared!');
-              } else {
-                toast.error('Please add your WhatsApp number in Profile Settings first.');
-              }
-            }}
+            onClick={handleSendDailySummary}
             className={cn(
               "flex-1 md:flex-none flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-bold transition-all",
-              lastSummarySent === new Date().toDateString()
+              isSummarySent
                 ? "bg-slate-100 text-slate-500 cursor-default"
                 : "bg-emerald-600 text-white shadow-lg shadow-emerald-100 hover:bg-emerald-700"
             )}
+            disabled={isSummarySent}
           >
-            <PhoneIcon className="w-4 h-4" /> {lastSummarySent === new Date().toDateString() ? 'Sent Today' : 'Send Summary Now'}
+            <PhoneIcon className="w-4 h-4" /> {isSummarySent ? 'Sent Today' : 'Send Summary Now'}
           </button>
         </div>
       </motion.div>
@@ -457,12 +459,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
               <p className="text-slate-500 text-sm max-w-xs mb-6">
                 Unlock the Sales Overview chart and advanced revenue trends by upgrading to the Prime Plan.
               </p>
-              <button 
-                onClick={() => onNavigate('subscription')}
+              <Link 
+                to="/subscription"
                 className="bg-emerald-600 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all"
               >
                 Upgrade to Prime
-              </button>
+              </Link>
             </div>
           </div>
         ) : (
@@ -525,25 +527,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
               </div>
               Low Stock Alerts
             </h2>
-            <button onClick={() => onNavigate('inventory')} className="text-sm text-emerald-600 font-semibold hover:underline">View All</button>
+            <Link to="/inventory" className="text-sm text-emerald-600 font-semibold hover:underline">View All</Link>
           </div>
           <div className="divide-y divide-slate-50">
             {lowStockItems.length > 0 ? lowStockItems.slice(0, 5).map(item => (
               <div key={item.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-slate-400 overflow-hidden border border-slate-100 shrink-0 relative">
-                    {item.isUploading ? (
-                      <Loader2 className="w-5 h-5 text-emerald-600 animate-spin" />
-                    ) : item.imageUrl ? (
+                    {item.image ? (
                       <img 
-                        key={item.imageUrl}
-                        src={item.imageUrl} 
+                        src={item.image} 
                         alt={item.name} 
                         className="w-full h-full object-cover" 
                         referrerPolicy="no-referrer" 
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).src = 'https://picsum.photos/seed/product/200/200';
-                        }}
                       />
                     ) : (
                       <Package className="w-5 h-5" />
@@ -583,7 +579,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
               <Clock className="w-5 h-5 text-rose-500" />
               Dead Stock (30+ Days)
             </h2>
-            <button onClick={() => onNavigate('inventory')} className="text-sm text-emerald-600 font-semibold hover:underline">View All</button>
+            <Link to="/inventory" className="text-sm text-emerald-600 font-semibold hover:underline">View All</Link>
           </div>
           
           {profile?.subscriptionStatus === 'free' ? (
@@ -593,12 +589,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
               </div>
               <p className="text-slate-900 font-bold text-sm">Prime Feature</p>
               <p className="text-slate-500 text-xs mt-1 mb-4">Upgrade to detect products that haven't sold in 30 days.</p>
-              <button 
-                onClick={() => onNavigate('subscription')}
+              <Link 
+                to="/subscription"
                 className="text-xs font-bold text-emerald-600 hover:underline uppercase tracking-widest"
               >
                 Upgrade Now
-              </button>
+              </Link>
             </div>
           ) : (
             <div className="divide-y divide-slate-50">
@@ -606,18 +602,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 <div key={item.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-slate-400 overflow-hidden border border-slate-100 shrink-0 relative">
-                      {item.isUploading ? (
-                        <Loader2 className="w-5 h-5 text-emerald-600 animate-spin" />
-                      ) : item.imageUrl ? (
+                      {item.imageUrl ? (
                         <img 
-                          key={item.imageUrl}
                           src={item.imageUrl} 
                           alt={item.name} 
                           className="w-full h-full object-cover" 
                           referrerPolicy="no-referrer" 
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).src = 'https://picsum.photos/seed/product/200/200';
-                          }}
                         />
                       ) : (
                         <Package className="w-5 h-5" />
@@ -649,7 +639,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
               <TrendingUp className="w-5 h-5 text-emerald-500" />
               Recent Sales
             </h2>
-            <button onClick={() => onNavigate('reports')} className="text-sm text-emerald-600 font-semibold hover:underline">Full Report</button>
+            <Link to="/reports" className="text-sm text-emerald-600 font-semibold hover:underline">Full Report</Link>
           </div>
           <div className="divide-y divide-slate-50">
             {recentSales.length > 0 ? recentSales.map(sale => {
@@ -658,18 +648,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 <div key={sale.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-slate-400 overflow-hidden border border-slate-100 shrink-0 relative">
-                      {product?.isUploading ? (
-                        <Loader2 className="w-5 h-5 text-emerald-600 animate-spin" />
-                      ) : product?.imageUrl ? (
+                      {product?.image ? (
                         <img 
-                          key={product.imageUrl}
-                          src={product.imageUrl} 
+                          src={product.image} 
                           alt={sale.productName} 
                           className="w-full h-full object-cover" 
                           referrerPolicy="no-referrer" 
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).src = 'https://picsum.photos/seed/product/200/200';
-                          }}
                         />
                       ) : (
                         <Package className="w-5 h-5" />

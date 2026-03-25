@@ -6,22 +6,48 @@ service cloud.firestore {
     // ===============================================================
     //
     // Collection: users
-    // Fields: uid, email, displayName, whatsappNumber, photoURL, subscriptionStatus, role, createdAt, updatedAt, isUploading, taxRate
+    // Document ID: userId (UID)
+    // Fields:
+    //   - uid: string (required) - The unique ID of the user.
+    //   - email: string (required) - The user's email address.
+    //   - displayName: string (required) - The user's display name.
+    //   - photoURL: string (optional) - The user's profile photo URL.
+    //   - subscriptionStatus: string (required, enum: ['free', 'premium']) - The user's subscription status.
+    //   - whatsappNumber: string (optional) - The user's WhatsApp number.
+    //   - taxRate: number (optional) - The user's default tax rate.
+    //   - role: string (required, enum: ['shop_owner', 'admin']) - The user's role.
+    //   - createdAt: string (required, ISO 8601) - When the user account was created.
+    //   - notificationsEnabled: bool (optional) - Whether notifications are enabled.
     //
     // Collection: products
-    // Fields: name, category, size, color, material, supplier, quantity, price, costPrice, discountPrice, taxRate, imageUrl, ownerId, createdAt, updatedAt, isUploading, lastSoldAt
+    // Document ID: productId
+    // Fields:
+    //   - name: string (required) - The name of the product.
+    //   - category: string (required) - The category of the product.
+    //   - size: string (required) - The size of the product.
+    //   - quantity: number (required) - The current quantity in stock.
+    //   - price: number (required) - The selling price of the product.
+    //   - costPrice: number (required) - The cost price of the product.
+    //   - ownerId: string (required) - The UID of the user who owns this product.
+    //   - createdAt: string (required, ISO 8601) - When the product was added.
     //
     // Collection: sales
-    // Fields: productId, productName, quantitySold, soldAt, ownerId, totalAmount, costPrice
-    //
-    // Collection: support_requests
-    // Fields: userId, userEmail, request, contactEmail, status, createdAt
+    // Document ID: saleId
+    // Fields:
+    //   - productId: string (required) - The ID of the product sold.
+    //   - productName: string (required) - The name of the product sold.
+    //   - quantitySold: number (required) - The quantity of the product sold.
+    //   - soldAt: string (required, ISO 8601) - When the sale occurred.
+    //   - ownerId: string (required) - The UID of the user who made the sale.
+    //   - totalAmount: number (required) - The total amount of the sale.
+    //   - costPrice: number (required) - The cost price of the product at the time of sale.
     //
     // ===============================================================
 
     // ===============================================================
     // Helper Functions
     // ===============================================================
+    
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -30,20 +56,11 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    function isDocOwner() {
-      return isAuthenticated() && resource != null && request.auth.uid == resource.data.ownerId;
-    }
-
     function isAdmin() {
       return isAuthenticated() &&
-        (('email' in request.auth.token && request.auth.token.email_verified == true && 
-          (request.auth.token.email == "mohamedmukasin@gmail.com" || request.auth.token.email == "johnwickmr16@gmail.com")) ||
-         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
-    }
-
-    function hasOnlyAllowedFields(fields) {
-      return request.resource.data.keys().hasOnly(fields);
+        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+          (request.auth.token.email == "mohamedmukasin@gmail.com" && request.auth.token.email_verified == true));
     }
 
     function isValidEmail(email) {
@@ -54,69 +71,49 @@ service cloud.firestore {
       return dateStr is string && dateStr.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*Z?$");
     }
 
-    function isValidUser(data) {
-      return (!('uid' in data) || data.uid is string) &&
-             (!('email' in data) || (data.email is string && isValidEmail(data.email))) &&
-             (!('subscriptionStatus' in data) || data.subscriptionStatus in ['free', 'premium']) &&
-             (!('role' in data) || data.role in ['user', 'shop_owner', 'admin']) &&
-             (!('createdAt' in data) || (data.createdAt is timestamp || isValidDateString(data.createdAt))) &&
-             (!('displayName' in data) || data.displayName is string) &&
-             (!('whatsappNumber' in data) || data.whatsappNumber is string) &&
-             (!('photoURL' in data) || isValidUrl(data.photoURL)) &&
-             (!('updatedAt' in data) || (data.updatedAt is timestamp || isValidDateString(data.updatedAt))) &&
-             (!('isUploading' in data) || data.isUploading is bool) &&
-             (!('notificationsEnabled' in data) || data.notificationsEnabled is bool) &&
-             (!('taxRate' in data) || data.taxRate is number);
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
     }
 
-    function isValidUrl(url) {
-      return url == null || (url is string && (url == "" || url.matches("^https://.*") || url.matches("^http://.*")));
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasRequiredFields(['uid', 'email', 'displayName', 'subscriptionStatus', 'role', 'createdAt']) &&
+             data.uid is string && data.uid.size() > 0 &&
+             data.email is string && isValidEmail(data.email) &&
+             data.displayName is string && data.displayName.size() > 0 && data.displayName.size() < 100 &&
+             data.subscriptionStatus in ['free', 'premium'] &&
+             data.role in ['shop_owner', 'admin'] &&
+             isValidDateString(data.createdAt);
     }
 
     function isValidProduct(data) {
-      return hasOnlyAllowedFields(['name', 'category', 'size', 'color', 'material', 'supplier', 'quantity', 'price', 'costPrice', 'discountPrice', 'taxRate', 'imageUrl', 'ownerId', 'createdAt', 'updatedAt', 'isUploading', 'lastSoldAt']) &&
-             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
-             data.quantity is number && data.quantity >= 0 &&
+      return hasRequiredFields(['name', 'category', 'size', 'quantity', 'price', 'costPrice', 'ownerId', 'createdAt']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
+             data.category is string && data.category.size() > 0 &&
+             data.size is string && data.size.size() > 0 &&
+             data.quantity is number &&
              data.price is number && data.price >= 0 &&
-             (!('costPrice' in data) || (data.costPrice is number && data.costPrice >= 0)) &&
-             data.ownerId == request.auth.uid &&
-             (data.createdAt is timestamp || isValidDateString(data.createdAt)) &&
-             (!('imageUrl' in data) || isValidUrl(data.imageUrl)) &&
-             (!('category' in data) || data.category is string) &&
-             (!('size' in data) || data.size is string) &&
-             (!('color' in data) || data.color is string) &&
-             (!('material' in data) || data.material is string) &&
-             (!('supplier' in data) || data.supplier is string) &&
-             (!('discountPrice' in data) || data.discountPrice is number) &&
-             (!('taxRate' in data) || data.taxRate is number) &&
-             (!('updatedAt' in data) || (data.updatedAt is timestamp || isValidDateString(data.updatedAt))) &&
-             (!('isUploading' in data) || data.isUploading is bool) &&
-             (!('lastSoldAt' in data) || (data.lastSoldAt is timestamp || isValidDateString(data.lastSoldAt)));
+             data.costPrice is number && data.costPrice >= 0 &&
+             data.ownerId is string && data.ownerId == request.auth.uid &&
+             isValidDateString(data.createdAt);
     }
 
     function isValidSale(data) {
-      return hasOnlyAllowedFields(['productId', 'productName', 'quantitySold', 'soldAt', 'ownerId', 'totalAmount', 'subtotal', 'taxAmount', 'taxRate', 'basePrice', 'costPrice']) &&
+      return hasRequiredFields(['productId', 'productName', 'quantitySold', 'soldAt', 'ownerId', 'totalAmount', 'costPrice']) &&
              data.productId is string &&
-             data.productName is string &&
+             data.productName is string && data.productName.size() > 0 &&
              data.quantitySold is number && data.quantitySold > 0 &&
-             data.ownerId == request.auth.uid &&
+             isValidDateString(data.soldAt) &&
+             data.ownerId is string && data.ownerId == request.auth.uid &&
              data.totalAmount is number && data.totalAmount >= 0 &&
-             (!('costPrice' in data) || (data.costPrice is number && data.costPrice >= 0)) &&
-             (data.soldAt is timestamp || isValidDateString(data.soldAt)) &&
-             (!('subtotal' in data) || data.subtotal is number) &&
-             (!('taxAmount' in data) || data.taxAmount is number) &&
-             (!('taxRate' in data) || data.taxRate is number) &&
-             (!('basePrice' in data) || data.basePrice is number);
-    }
-
-    function isValidSupportRequest(data) {
-      return hasOnlyAllowedFields(['userId', 'userEmail', 'request', 'contactEmail', 'status', 'createdAt']) &&
-             data.request is string && data.request.size() > 0 && data.request.size() < 2000 &&
-             (data.createdAt is timestamp || isValidDateString(data.createdAt)) &&
-             data.status in ['pending', 'reviewed', 'resolved'] &&
-             (!('contactEmail' in data) || (data.contactEmail is string && data.contactEmail.size() < 100)) &&
-             (!('userId' in data) || data.userId is string) &&
-             (!('userEmail' in data) || data.userEmail is string);
+             data.costPrice is number && data.costPrice >= 0;
     }
 
     // ===============================================================
@@ -125,32 +122,30 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
-      allow create: if isOwner(userId) && isValidUser(request.resource.data) && 
-                      request.resource.data.keys().hasAll(['uid', 'email', 'subscriptionStatus', 'role', 'createdAt']) &&
-                      (request.resource.data.role in ['user', 'shop_owner'] || isAdmin());
-      allow update: if (isOwner(userId) || isAdmin()) && isValidUser(request.resource.data) && 
-                      (request.resource.data.role == resource.data.role || isAdmin() || 
-                       (isOwner(userId) && request.resource.data.role == 'admin' && 
-                        request.auth.token.email in ["mohamedmukasin@gmail.com", "johnwickmr16@gmail.com"]));
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && 
+                      (isOwner(userId) && request.resource.data.role == 'shop_owner' || isAdmin());
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && 
+                      (isOwner(userId) && request.resource.data.role == resource.data.role || isAdmin());
     }
 
     match /products/{productId} {
-      allow read: if isDocOwner() || isAdmin();
+      allow read: if isAuthenticated() && (resource.data.ownerId == request.auth.uid || isAdmin());
       allow create: if isAuthenticated() && isValidProduct(request.resource.data);
-      allow update: if (isDocOwner() || isAdmin()) && isValidProduct(request.resource.data);
-      allow delete: if isDocOwner() || isAdmin();
+      allow update: if isAuthenticated() && isValidProduct(request.resource.data) && 
+                      (resource.data.ownerId == request.auth.uid || isAdmin());
+      allow delete: if isAuthenticated() && (resource.data.ownerId == request.auth.uid || isAdmin());
     }
 
     match /sales/{saleId} {
-      allow read: if isDocOwner() || isAdmin();
+      allow read: if isAuthenticated() && (resource.data.ownerId == request.auth.uid || isAdmin());
       allow create: if isAuthenticated() && isValidSale(request.resource.data);
-      allow update: if isAdmin();
-      allow delete: if isAdmin();
+      allow update: if isAuthenticated() && isValidSale(request.resource.data) && 
+                      (resource.data.ownerId == request.auth.uid || isAdmin());
+      allow delete: if isAuthenticated() && (resource.data.ownerId == request.auth.uid || isAdmin());
     }
 
-    match /support_requests/{requestId} {
-      allow create: if isAuthenticated() && isValidSupportRequest(request.resource.data);
-      allow read, update, delete: if isAdmin();
+    match /{path=**} {
+      allow read, write: if false;
     }
   }
 }

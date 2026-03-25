@@ -1,6 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
-import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { Product, Sale } from '../types';
 import { 
@@ -12,16 +10,23 @@ import {
   Calendar,
   Package,
   ArrowRight,
-  Lock
+  Lock,
+  ArrowLeft
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { subDays, isBefore, parseISO, format, isValid } from 'date-fns';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { toast } from 'sonner';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { db } from '../firebase';
+import { handleFirestoreError } from '../lib/firestore-errors';
+import { OperationType } from '../types';
 
 export const Reports: React.FC = () => {
   const { user, profile } = useAuth();
+  const navigate = useNavigate();
   const [products, setProducts] = useState<Product[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,21 +34,36 @@ export const Reports: React.FC = () => {
   useEffect(() => {
     if (!user) return;
 
-    const productsQuery = query(collection(db, 'products'), where('ownerId', '==', user.uid));
-    const salesQuery = query(collection(db, 'sales'), where('ownerId', '==', user.uid), orderBy('soldAt', 'desc'));
+    const productsQuery = query(
+      collection(db, 'products'),
+      where('ownerId', '==', user.uid)
+    );
 
-    const unsubProducts = onSnapshot(productsQuery, (snapshot) => {
-      setProducts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product)));
-    });
+    const salesQuery = query(
+      collection(db, 'sales'),
+      where('ownerId', '==', user.uid)
+    );
 
-    const unsubSales = onSnapshot(salesQuery, (snapshot) => {
-      setSales(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Sale)));
+    const unsubscribeProducts = onSnapshot(productsQuery, (snapshot) => {
+      const productsData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as Product));
+      setProducts(productsData);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'products'));
+
+    const unsubscribeSales = onSnapshot(salesQuery, (snapshot) => {
+      const salesData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as Sale));
+      setSales(salesData);
       setLoading(false);
-    });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'sales'));
 
     return () => {
-      unsubProducts();
-      unsubSales();
+      unsubscribeProducts();
+      unsubscribeSales();
     };
   }, [user]);
 
@@ -178,9 +198,17 @@ export const Reports: React.FC = () => {
   return (
     <div className="space-y-8">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Reports & Analytics</h1>
-          <p className="text-slate-500">Analyze your shop's performance and inventory health.</p>
+        <div className="flex items-center gap-4">
+          <button 
+            onClick={() => navigate('/dashboard')}
+            className="p-2 hover:bg-slate-100 rounded-full transition-colors md:hidden"
+          >
+            <ArrowLeft className="w-6 h-6 text-slate-600" />
+          </button>
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Reports & Analytics</h1>
+            <p className="text-slate-500">Analyze your shop's performance and inventory health.</p>
+          </div>
         </div>
         {profile?.subscriptionStatus === 'premium' ? (
           <button 

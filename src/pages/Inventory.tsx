@@ -1,22 +1,22 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { Product } from '../types';
+import { cn } from '../lib/utils';
 import { 
   collection, 
   addDoc, 
   updateDoc, 
-  setDoc,
   deleteDoc, 
   doc, 
+  onSnapshot, 
   query, 
-  where, 
-  onSnapshot,
-  serverTimestamp
+  where,
+  orderBy
 } from 'firebase/firestore';
-import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import imageCompression from 'browser-image-compression';
-import { db, storage, handleFirestoreError, OperationType } from '../firebase';
-import { useAuth } from '../contexts/AuthContext';
-import { Product } from '../types';
-import { cn } from '../lib/utils';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { db, storage } from '../firebase';
+import { handleFirestoreError } from '../lib/firestore-errors';
+import { OperationType } from '../types';
 import { 
   Plus, 
   Search, 
@@ -31,14 +31,17 @@ import {
   Upload,
   Palette,
   Layers,
-  Truck
+  Truck,
+  ArrowLeft
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { ConfirmationModal } from '../components/ConfirmationModal';
 import { toast } from 'sonner';
 
 export const Inventory: React.FC = () => {
   const { user, profile } = useAuth();
+  const navigate = useNavigate();
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -78,25 +81,20 @@ export const Inventory: React.FC = () => {
   useEffect(() => {
     if (!user) return;
 
-    const q = query(collection(db, 'products'), where('ownerId', '==', user.uid));
+    const q = query(
+      collection(db, 'products'),
+      where('ownerId', '==', user.uid),
+      orderBy('createdAt', 'desc')
+    );
+
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const fetchedProducts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
-      // Sort by createdAt desc in memory to ensure newest is always at top
-      fetchedProducts.sort((a, b) => {
-        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return dateB - dateA;
-      });
-      setProducts(fetchedProducts);
+      const productsData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as Product));
+      setProducts(productsData);
       setLoading(false);
-    }, (error) => {
-      try {
-        handleFirestoreError(error, OperationType.GET, 'products');
-      } catch (e) {
-        console.error("Products fetch error handled:", e);
-      }
-      setLoading(false);
-    });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'products'));
 
     return () => unsubscribe();
   }, [user]);
@@ -154,12 +152,6 @@ export const Inventory: React.FC = () => {
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      // Check file size (20MB limit)
-      const maxSize = 20 * 1024 * 1024;
-      if (file.size > maxSize) {
-        toast.error('Image size too large. Maximum allowed size is 20MB.');
-        return;
-      }
       setImageFile(file);
       const reader = new FileReader();
       reader.onloadend = () => {
@@ -175,24 +167,23 @@ export const Inventory: React.FC = () => {
 
     // Subscription check
     if (!editingProduct && profile?.subscriptionStatus === 'free' && products.length >= 50) {
-      toast.error('Free plan limit reached (50 products). Please upgrade to Premium for unlimited products.');
+      toast.error('Free plan limit reached (50 products). Please upgrade to Prime for unlimited products.');
       return;
     }
 
     setSubmitting(true);
     
-    const productRef = editingProduct 
-      ? doc(db, 'products', editingProduct.id) 
-      : doc(collection(db, 'products'));
-
     try {
+      let imageUrl = imagePreview || '';
+
+      if (imageFile) {
+        const imageRef = ref(storage, `products/${user.uid}/${Date.now()}_${imageFile.name}`);
+        const uploadResult = await uploadBytes(imageRef, imageFile);
+        imageUrl = await getDownloadURL(uploadResult.ref);
+      }
+
       const now = new Date().toISOString();
-      let imageUrl = editingProduct?.imageUrl || '';
-
-      const productId = productRef.id;
-
-      // 1. Prepare initial product data
-      const productData: any = {
+      const productData = {
         ...formData,
         imageUrl,
         quantity: Number(formData.quantity),
@@ -201,117 +192,22 @@ export const Inventory: React.FC = () => {
         discountPrice: Number(formData.discountPrice) || 0,
         taxRate: Number(formData.taxRate) || 0,
         ownerId: user.uid,
-        updatedAt: now,
-        isUploading: false, // Default to false
+        createdAt: editingProduct?.createdAt || now,
+        updatedAt: now
       };
 
-      // 2. Handle image upload if needed
-      if (imageFile) {
-        try {
-          // Set uploading state in Firestore for real-time feedback
-          if (editingProduct) {
-            try {
-              await updateDoc(productRef, { isUploading: true });
-            } catch (error) {
-              handleFirestoreError(error, OperationType.UPDATE, `products/${productRef.id}`);
-            }
-          } else {
-            // For new products, create the document immediately with isUploading: true
-            // so the user sees it in the list with a loading state
-            try {
-              await setDoc(productRef, {
-                ...productData,
-                isUploading: true,
-                createdAt: now,
-              });
-            } catch (error) {
-              handleFirestoreError(error, OperationType.CREATE, `products/${productRef.id}`);
-            }
-          }
-
-          // Compress image
-          const options = {
-            maxSizeMB: 2,
-            maxWidthOrHeight: 1200,
-            useWebWorker: true,
-            initialQuality: 0.8
-          };
-          
-          let fileToUpload: File | Blob = imageFile;
-          try {
-            fileToUpload = await imageCompression(imageFile, options);
-          } catch (compressionError) {
-            console.error('Compression error:', compressionError);
-          }
-
-          const fileExtension = imageFile.name.split('.').pop() || 'jpg';
-          const storageRef = ref(storage, `products/${user.uid}/${Date.now()}_product.${fileExtension}`);
-          
-          // Use uploadBytesResumable for better reliability
-          const uploadTask = uploadBytesResumable(storageRef, fileToUpload);
-          
-          imageUrl = await new Promise((resolve, reject) => {
-            uploadTask.on('state_changed', 
-              (snapshot) => {
-                const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-                console.log('Upload is ' + progress + '% done');
-              }, 
-              (error) => {
-                console.error('Upload error:', error);
-                reject(error);
-              }, 
-              async () => {
-                const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-                resolve(downloadURL);
-              }
-            );
-          });
-          
-          // Update productData with the new imageUrl
-          productData.imageUrl = imageUrl;
-          productData.isUploading = false;
-        } catch (error) {
-          console.error('Image upload error:', error);
-          productData.isUploading = false;
-          // Even if upload fails, we should clear the uploading state in Firestore
-          await updateDoc(productRef, { isUploading: false }).catch(() => {});
-          toast.error('Image upload failed, but product details were saved.');
-        }
-      } else {
-        productData.isUploading = false;
-      }
-
-      // 3. Save final product details
       if (editingProduct) {
-        try {
-          await updateDoc(productRef, {
-            ...productData,
-          });
-          toast.success('Product updated successfully!');
-        } catch (error) {
-          handleFirestoreError(error, OperationType.UPDATE, `products/${productRef.id}`);
-        }
+        await updateDoc(doc(db, 'products', editingProduct.id), productData);
+        toast.success('Product updated successfully!');
       } else {
-        try {
-          await setDoc(productRef, {
-            ...productData,
-            createdAt: now,
-          });
-          toast.success('Product added successfully!');
-        } catch (error) {
-          handleFirestoreError(error, OperationType.CREATE, `products/${productRef.id}`);
-        }
+        await addDoc(collection(db, 'products'), productData);
+        toast.success('Product added successfully!');
       }
 
       setIsModalOpen(false);
       resetForm();
     } catch (error) {
-      console.error('Error saving product:', error);
-      toast.error('Failed to save product.');
-      // Clear uploading flag in Firestore on error for both new and existing products
-      if (productRef) {
-        await updateDoc(productRef, { isUploading: false }).catch(err => console.error('Error clearing isUploading:', err));
-      }
+      handleFirestoreError(error, editingProduct ? OperationType.UPDATE : OperationType.CREATE, 'products');
     } finally {
       setSubmitting(false);
     }
@@ -328,9 +224,10 @@ export const Inventory: React.FC = () => {
       await deleteDoc(doc(db, 'products', productToDelete));
       toast.success('Product deleted successfully!');
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `products/${productToDelete}`);
+      handleFirestoreError(error, OperationType.DELETE, 'products');
     } finally {
       setProductToDelete(null);
+      setIsDeleteModalOpen(false);
     }
   };
 
@@ -352,25 +249,33 @@ export const Inventory: React.FC = () => {
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Inventory</h1>
-          <p className="text-slate-500">Manage your shop's clothing stock.</p>
-          {profile?.subscriptionStatus === 'free' && (
-            <div className="mt-2 flex items-center gap-2">
-              <div className="h-1.5 w-32 bg-slate-100 rounded-full overflow-hidden">
-                <div 
-                  className={cn(
-                    "h-full transition-all duration-500",
-                    products.length >= 45 ? "bg-rose-500" : "bg-emerald-500"
-                  )}
-                  style={{ width: `${Math.min((products.length / 50) * 100, 100)}%` }}
-                />
+        <div className="flex items-center gap-4">
+          <button 
+            onClick={() => navigate('/dashboard')}
+            className="p-2 hover:bg-slate-100 rounded-full transition-colors md:hidden"
+          >
+            <ArrowLeft className="w-6 h-6 text-slate-600" />
+          </button>
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Inventory</h1>
+            <p className="text-slate-500">Manage your shop's clothing stock.</p>
+            {profile?.subscriptionStatus === 'free' && (
+              <div className="mt-2 flex items-center gap-2">
+                <div className="h-1.5 w-32 bg-slate-100 rounded-full overflow-hidden">
+                  <div 
+                    className={cn(
+                      "h-full transition-all duration-500",
+                      products.length >= 45 ? "bg-rose-500" : "bg-emerald-500"
+                    )}
+                    style={{ width: `${Math.min((products.length / 50) * 100, 100)}%` }}
+                  />
+                </div>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  {products.length}/50 Products Used
+                </span>
               </div>
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                {products.length}/50 Products Used
-              </span>
-            </div>
-          )}
+            )}
+          </div>
         </div>
         <motion.button 
           whileHover={{ scale: 1.02 }}

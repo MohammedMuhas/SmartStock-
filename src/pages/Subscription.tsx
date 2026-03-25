@@ -1,6 +1,4 @@
 import React, { useState } from 'react';
-import { updateDoc, doc } from 'firebase/firestore';
-import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { 
   Check, 
@@ -12,8 +10,10 @@ import {
   Loader2,
   Package,
   CreditCard,
-  AlertCircle
+  AlertCircle,
+  ArrowLeft
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
@@ -25,7 +25,8 @@ declare global {
 }
 
 export const Subscription: React.FC = () => {
-  const { user, profile } = useAuth();
+  const { user, profile, updateProfile } = useAuth();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [loadingTime, setLoadingTime] = useState(0);
   const [scriptLoaded, setScriptLoaded] = useState(!!window.Razorpay);
@@ -91,7 +92,7 @@ export const Subscription: React.FC = () => {
     await new Promise(resolve => setTimeout(resolve, 2000));
     
     try {
-      await updateDoc(doc(db, 'users', user.uid), {
+      await updateProfile({
         subscriptionStatus: 'premium',
         paymentMethod: 'mock_gateway',
         upgradedAt: new Date().toISOString()
@@ -109,12 +110,11 @@ export const Subscription: React.FC = () => {
   const handleUpgrade = async () => {
     if (!user) return;
 
+    // For offline/local mode, we'll use mock upgrade if no key is provided
     const razorpayKey = import.meta.env.VITE_RAZORPAY_KEY_ID;
     
     if (!razorpayKey || razorpayKey === 'rzp_test_dummykey') {
-      toast.error('Payment gateway not configured.', {
-        description: 'Please set VITE_RAZORPAY_KEY_ID in the app settings.',
-      });
+      await completeMockUpgrade();
       return;
     }
 
@@ -136,16 +136,15 @@ export const Subscription: React.FC = () => {
         description: "Premium Plan",
         handler: async function (response: any) {
           alert("Payment Successful");
-          localStorage.setItem("isPremium", "true");
           
-          // Update Firestore for app consistency
+          // Update local profile
           try {
-            await updateDoc(doc(db, 'users', user.uid), {
+            await updateProfile({
               subscriptionStatus: 'premium',
               upgradedAt: new Date().toISOString()
             });
           } catch (err) {
-            console.error('Firestore update failed:', err);
+            console.error('Profile update failed:', err);
           }
           
           window.location.href = '/dashboard';
@@ -182,7 +181,7 @@ export const Subscription: React.FC = () => {
 
     setLoading(true);
     try {
-      await updateDoc(doc(db, 'users', user.uid), {
+      await updateProfile({
         subscriptionStatus: 'free',
         downgradedAt: new Date().toISOString()
       });
@@ -237,6 +236,18 @@ export const Subscription: React.FC = () => {
 
   return (
     <div className="max-w-5xl mx-auto space-y-12 py-8">
+      <div className="flex items-center gap-4">
+        <button 
+          onClick={() => navigate('/dashboard')}
+          className="p-2 hover:bg-slate-100 rounded-full transition-colors md:hidden"
+        >
+          <ArrowLeft className="w-6 h-6 text-slate-600" />
+        </button>
+        <div>
+          <h1 className="text-4xl font-black text-slate-900 tracking-tight">Simple, Transparent Pricing</h1>
+        </div>
+      </div>
+
       {isDummyKey && (
         <div className="p-8 bg-amber-50 border border-amber-200 rounded-[3rem] flex flex-col md:flex-row items-center md:items-start gap-6 animate-in slide-in-from-top duration-500">
           <div className="p-4 bg-amber-100 rounded-3xl shrink-0">
@@ -305,7 +316,6 @@ export const Subscription: React.FC = () => {
       )}
 
       <div className="text-center space-y-4">
-        <h1 className="text-4xl font-black text-slate-900 tracking-tight">Simple, Transparent Pricing</h1>
         
         {(!import.meta.env.VITE_RAZORPAY_KEY_ID || import.meta.env.VITE_RAZORPAY_KEY_ID === 'rzp_test_dummykey') && (
           <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 max-w-2xl mx-auto flex items-center gap-3 text-amber-800 text-sm font-medium">

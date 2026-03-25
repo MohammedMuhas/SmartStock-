@@ -1,89 +1,78 @@
 {
   "entities": {
-    "User": {
-      "title": "User",
-      "description": "User profile and subscription data",
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Stores user account information and subscription status.",
       "type": "object",
       "properties": {
-        "uid": { "type": "string" },
-        "email": { "type": "string", "format": "email" },
-        "displayName": { "type": "string" },
-        "subscriptionStatus": { "type": "string", "enum": ["free", "premium"] },
-        "whatsappNumber": { "type": "string" },
-        "role": { "type": "string", "enum": ["user", "admin"] },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "uid": { "type": "string", "description": "The unique ID of the user." },
+        "email": { "type": "string", "format": "email", "description": "The user's email address." },
+        "displayName": { "type": "string", "description": "The user's display name." },
+        "photoURL": { "type": "string", "format": "uri", "description": "The user's profile photo URL." },
+        "subscriptionStatus": { "type": "string", "enum": ["free", "premium"], "description": "The user's subscription status." },
+        "whatsappNumber": { "type": "string", "description": "The user's WhatsApp number." },
+        "taxRate": { "type": "number", "description": "The user's default tax rate." },
+        "role": { "type": "string", "enum": ["shop_owner", "admin"], "description": "The user's role." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the user account was created." },
+        "notificationsEnabled": { "type": "boolean", "description": "Whether notifications are enabled." }
       },
-      "required": ["uid", "email", "subscriptionStatus", "role"]
+      "required": ["uid", "email", "displayName", "subscriptionStatus", "role", "createdAt"]
     },
     "Product": {
       "title": "Product",
-      "description": "Clothing item in inventory",
+      "description": "Stores product information in the inventory.",
       "type": "object",
       "properties": {
-        "name": { "type": "string" },
-        "category": { "type": "string" },
-        "size": { "type": "string" },
-        "color": { "type": "string" },
-        "material": { "type": "string" },
-        "supplier": { "type": "string" },
-        "imageUrl": { "type": "string", "format": "uri" },
-        "quantity": { "type": "integer" },
-        "price": { "type": "number" },
-        "costPrice": { "type": "number", "description": "The price paid to acquire the product" },
-        "discountPrice": { "type": "number" },
-        "taxRate": { "type": "number" },
-        "ownerId": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "lastSoldAt": { "type": "string", "format": "date-time" }
+        "name": { "type": "string", "description": "The name of the product." },
+        "category": { "type": "string", "description": "The category of the product." },
+        "size": { "type": "string", "description": "The size of the product." },
+        "color": { "type": "string", "description": "The color of the product." },
+        "material": { "type": "string", "description": "The material of the product." },
+        "supplier": { "type": "string", "description": "The supplier of the product." },
+        "imageUrl": { "type": "string", "format": "uri", "description": "The product's image URL." },
+        "quantity": { "type": "number", "description": "The current quantity in stock." },
+        "price": { "type": "number", "description": "The selling price of the product." },
+        "costPrice": { "type": "number", "description": "The cost price of the product." },
+        "discountPrice": { "type": "number", "description": "The discounted price of the product." },
+        "taxRate": { "type": "number", "description": "The tax rate for this product." },
+        "ownerId": { "type": "string", "description": "The UID of the user who owns this product." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the product was added." },
+        "lastSoldAt": { "type": "string", "format": "date-time", "description": "When the product was last sold." }
       },
-      "required": ["name", "quantity", "price", "costPrice", "ownerId"]
+      "required": ["name", "category", "size", "quantity", "price", "costPrice", "ownerId", "createdAt"]
     },
     "Sale": {
       "title": "Sale",
-      "description": "Daily sales record",
+      "description": "Stores information about a sale transaction.",
       "type": "object",
       "properties": {
-        "productId": { "type": "string" },
-        "productName": { "type": "string" },
-        "quantitySold": { "type": "integer" },
-        "soldAt": { "type": "string", "format": "date-time" },
-        "ownerId": { "type": "string" },
-        "totalAmount": { "type": "number" },
-        "costPrice": { "type": "number", "description": "The cost price of the product at the time of sale" }
+        "productId": { "type": "string", "description": "The ID of the product sold." },
+        "productName": { "type": "string", "description": "The name of the product sold." },
+        "quantitySold": { "type": "number", "description": "The quantity of the product sold." },
+        "soldAt": { "type": "string", "format": "date-time", "description": "When the sale occurred." },
+        "ownerId": { "type": "string", "description": "The UID of the user who made the sale." },
+        "totalAmount": { "type": "number", "description": "The total amount of the sale." },
+        "costPrice": { "type": "number", "description": "The cost price of the product at the time of sale." },
+        "subtotal": { "type": "number", "description": "The subtotal of the sale." },
+        "taxAmount": { "type": "number", "description": "The tax amount of the sale." },
+        "taxRate": { "type": "number", "description": "The tax rate applied to the sale." },
+        "basePrice": { "type": "number", "description": "The base price of the product at the time of sale." }
       },
-      "required": ["productId", "quantitySold", "soldAt", "ownerId", "totalAmount", "costPrice"]
-    },
-    "SupportRequest": {
-      "title": "Support Request",
-      "description": "User submitted problem or feature request",
-      "type": "object",
-      "properties": {
-        "userId": { "type": "string" },
-        "userEmail": { "type": "string", "format": "email" },
-        "request": { "type": "string" },
-        "contactEmail": { "type": "string", "format": "email" },
-        "status": { "type": "string", "enum": ["pending", "reviewed", "resolved"] },
-        "createdAt": { "type": "string", "format": "date-time" }
-      },
-      "required": ["request", "createdAt"]
+      "required": ["productId", "productName", "quantitySold", "soldAt", "ownerId", "totalAmount", "costPrice"]
     }
   },
   "firestore": {
     "/users/{userId}": {
-      "schema": "User",
-      "description": "User profiles"
+      "schema": "UserProfile",
+      "description": "User profile documents."
     },
     "/products/{productId}": {
       "schema": "Product",
-      "description": "Inventory items"
+      "description": "Product documents in the inventory."
     },
     "/sales/{saleId}": {
       "schema": "Sale",
-      "description": "Sales records"
-    },
-    "/support_requests/{requestId}": {
-      "schema": "SupportRequest",
-      "description": "User support and feature requests"
+      "description": "Sale transaction documents."
     }
   }
 }

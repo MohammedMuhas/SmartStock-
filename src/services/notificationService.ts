@@ -68,30 +68,21 @@ export class NotificationService {
     const now = new Date();
     const hours = now.getHours();
     const minutes = now.getMinutes();
-    const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
 
     // Check for 9:00 AM
     if (hours === 9 && minutes === 0) {
-      const key = `notif-9am-${dateStr}`;
-      if (!localStorage.getItem(key)) {
-        await this.showNotification('Morning Update', {
-          body: `Good morning! Time to check your ${shopName} inventory.`,
-          tag: 'morning-update'
-        });
-        localStorage.setItem(key, 'sent');
-      }
+      await this.showNotification('Morning Update', {
+        body: `Good morning! Time to check your ${shopName} inventory.`,
+        tag: 'morning-update'
+      });
     }
 
     // Check for 8:00 PM (20:00)
     if (hours === 20 && minutes === 0) {
-      const key = `notif-8pm-${dateStr}`;
-      if (!localStorage.getItem(key)) {
-        await this.showNotification('Evening Summary', {
-          body: `Good evening! Don't forget to review today's sales in ${shopName}.`,
-          tag: 'evening-update'
-        });
-        localStorage.setItem(key, 'sent');
-      }
+      await this.showNotification('Evening Summary', {
+        body: `Good evening! Don't forget to review today's sales in ${shopName}.`,
+        tag: 'evening-update'
+      });
     }
   }
 }

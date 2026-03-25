@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { Layout } from './components/Layout';
 import { Auth } from './pages/Auth';
@@ -9,23 +10,20 @@ import { Reports } from './pages/Reports';
 import { Subscription } from './pages/Subscription';
 import { AdminPanel } from './pages/AdminPanel';
 import { Profile } from './pages/Profile';
-import { Loader2, Bell, BellOff } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { NotificationManager } from './components/NotificationManager';
 import { Toaster } from 'sonner';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { NotificationService } from './services/notificationService';
-import { useEffect } from 'react';
 
 const AppContent: React.FC = () => {
   const { user, loading, profile } = useAuth();
-  const [activeView, setActiveView] = useState('dashboard');
+  const location = useLocation();
 
   useEffect(() => {
     if (user && profile?.notificationsEnabled) {
-      // Notify on app open
       NotificationService.notifyAppOpen(profile.displayName || 'SmartStock');
 
-      // Notify on visibility change (phone lock/unlock)
       const handleVisibilityChange = () => {
         if (document.visibilityState === 'visible') {
           NotificationService.notifyAppVisible(profile.displayName || 'SmartStock');
@@ -34,10 +32,9 @@ const AppContent: React.FC = () => {
 
       document.addEventListener('visibilitychange', handleVisibilityChange);
 
-      // Check for scheduled notifications every minute
       const interval = setInterval(() => {
         NotificationService.checkScheduledNotifications(profile.displayName || 'SmartStock');
-      }, 60000); // 1 minute
+      }, 60000);
 
       return () => {
         document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -58,32 +55,21 @@ const AppContent: React.FC = () => {
     return <Auth />;
   }
 
-  const renderView = () => {
-    switch (activeView) {
-      case 'dashboard':
-        return <Dashboard onNavigate={setActiveView} />;
-      case 'inventory':
-        return <Inventory />;
-      case 'sales':
-        return <SalesEntry />;
-      case 'reports':
-        return <Reports />;
-      case 'subscription':
-        return <Subscription />;
-      case 'admin':
-        return <AdminPanel />;
-      case 'profile':
-        return <Profile onBack={() => setActiveView('dashboard')} />;
-      default:
-        return <Dashboard onNavigate={setActiveView} />;
-    }
-  };
-
   return (
-    <Layout activeView={activeView} onViewChange={setActiveView}>
+    <Layout>
       <Toaster position="top-center" richColors />
       <NotificationManager />
-      {renderView()}
+      <Routes>
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/inventory" element={<Inventory />} />
+        <Route path="/sales" element={<SalesEntry />} />
+        <Route path="/reports" element={<Reports />} />
+        <Route path="/subscription" element={<Subscription />} />
+        <Route path="/admin" element={<AdminPanel />} />
+        <Route path="/profile" element={<Profile />} />
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      </Routes>
     </Layout>
   );
 };
@@ -92,7 +78,9 @@ export default function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <AppContent />
+        <Router>
+          <AppContent />
+        </Router>
       </AuthProvider>
     </ErrorBoundary>
   );

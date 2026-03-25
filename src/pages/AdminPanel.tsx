@@ -1,6 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, onSnapshot, getDocs, where, doc, updateDoc } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { UserProfile } from '../types';
 import { 
@@ -16,13 +14,22 @@ import {
   Copy,
   RefreshCw,
   Lock,
-  Mail
+  Mail,
+  ArrowLeft
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
+import { cn } from '../lib/utils';
+
+import { collection, onSnapshot, query } from 'firebase/firestore';
+import { db } from '../firebase';
+import { handleFirestoreError } from '../lib/firestore-errors';
+import { OperationType } from '../types';
 
 export const AdminPanel: React.FC = () => {
-  const { isAdmin, user, profile } = useAuth();
+  const { isAdmin, user, profile, updateProfile } = useAuth();
+  const navigate = useNavigate();
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -37,12 +44,13 @@ export const AdminPanel: React.FC = () => {
 
     const q = query(collection(db, 'users'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      setUsers(snapshot.docs.map(doc => doc.data() as UserProfile));
+      const usersData = snapshot.docs.map(doc => ({
+        uid: doc.id,
+        ...doc.data()
+      } as UserProfile));
+      setUsers(usersData);
       setLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, 'users');
-      setLoading(false);
-    });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'users'));
 
     return () => unsubscribe();
   }, [isAdmin]);
@@ -88,10 +96,11 @@ export const AdminPanel: React.FC = () => {
                   const val = (e.target as HTMLInputElement).value;
                   if (val === 'SMART_ADMIN_2026') {
                     try {
-                      await updateDoc(doc(db, 'users', user.uid), { role: 'admin' });
+                      await updateProfile({ role: 'admin' });
                       toast.success('Admin access granted!');
                     } catch (error) {
-                      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}`);
+                      console.error('Error updating role:', error);
+                      toast.error('Failed to update role.');
                     }
                   } else {
                     toast.error('Invalid admin key');
@@ -122,12 +131,20 @@ export const AdminPanel: React.FC = () => {
   return (
     <div className="space-y-8">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-            <ShieldCheck className="w-7 h-7 text-emerald-600" />
-            Admin Dashboard
-          </h1>
-          <p className="text-slate-500">Monitor platform growth and user activity.</p>
+        <div className="flex items-center gap-4">
+          <button 
+            onClick={() => navigate('/dashboard')}
+            className="p-2 hover:bg-slate-100 rounded-full transition-colors md:hidden"
+          >
+            <ArrowLeft className="w-6 h-6 text-slate-600" />
+          </button>
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+              <ShieldCheck className="w-7 h-7 text-emerald-600" />
+              Admin Dashboard
+            </h1>
+            <p className="text-slate-500">Monitor platform growth and user activity.</p>
+          </div>
         </div>
         
         <button 
@@ -280,6 +297,3 @@ export const AdminPanel: React.FC = () => {
   );
 };
 
-function cn(...inputs: any[]) {
-  return inputs.filter(Boolean).join(' ');
-}

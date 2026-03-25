@@ -1,10 +1,8 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Send, Lightbulb, Mail, Loader2 } from 'lucide-react';
-import { collection, addDoc } from 'firebase/firestore';
-import { db, auth } from '../firebase';
 import { toast } from 'sonner';
-import { OperationType } from '../types';
+import { useAuth } from '../contexts/AuthContext';
 
 interface SupportModalProps {
   isOpen: boolean;
@@ -12,32 +10,10 @@ interface SupportModalProps {
 }
 
 export const SupportModal: React.FC<SupportModalProps> = ({ isOpen, onClose }) => {
+  const { user } = useAuth();
   const [request, setRequest] = useState('');
   const [email, setEmail] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const handleFirestoreError = (error: any, operationType: OperationType, path: string | null) => {
-    const errInfo = {
-      error: error instanceof Error ? error.message : String(error),
-      authInfo: {
-        userId: auth.currentUser?.uid,
-        email: auth.currentUser?.email,
-        emailVerified: auth.currentUser?.emailVerified,
-        isAnonymous: auth.currentUser?.isAnonymous,
-        tenantId: auth.currentUser?.tenantId,
-        providerInfo: auth.currentUser?.providerData.map(provider => ({
-          providerId: provider.providerId,
-          displayName: provider.displayName,
-          email: provider.email,
-          photoUrl: provider.photoURL
-        })) || []
-      },
-      operationType,
-      path
-    };
-    console.error('Firestore Error: ', JSON.stringify(errInfo));
-    throw new Error(JSON.stringify(errInfo));
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,11 +23,22 @@ export const SupportModal: React.FC<SupportModalProps> = ({ isOpen, onClose }) =
     }
 
     setIsSubmitting(true);
-    const path = 'support_requests';
     try {
+      // Diagnostic: check if server is reachable
+      try {
+        const healthCheck = await fetch('/api/health');
+        if (!healthCheck.ok) {
+          console.warn('Backend health check failed:', healthCheck.status);
+        } else {
+          console.log('Backend is healthy');
+        }
+      } catch (e) {
+        console.error('Backend is unreachable:', e);
+      }
+
       const data: any = {
-        userId: auth.currentUser?.uid || 'anonymous',
-        userEmail: auth.currentUser?.email || 'anonymous',
+        userId: user?.uid || 'anonymous',
+        userEmail: user?.email || 'anonymous',
         request: request.trim(),
         status: 'pending',
         createdAt: new Date().toISOString(),
@@ -61,20 +48,25 @@ export const SupportModal: React.FC<SupportModalProps> = ({ isOpen, onClose }) =
         data.contactEmail = email.trim();
       }
 
-      await addDoc(collection(db, path), data);
-
       // Send email notification via backend
       try {
-        await fetch('/api/support', {
+        const response = await fetch('/api/support', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(data),
         });
+        
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || `Server responded with ${response.status}`);
+        }
+        
+        console.log('Support email request sent successfully');
       } catch (emailError) {
         console.error('Failed to send email notification:', emailError);
-        // We don't block the user if email fails, as the request is already in Firestore
+        // We don't block the user if email fails, but we log it
       }
 
       toast.success('Request submitted successfully! We will review it soon.');
@@ -83,11 +75,6 @@ export const SupportModal: React.FC<SupportModalProps> = ({ isOpen, onClose }) =
       onClose();
     } catch (error) {
       console.error('Error submitting support request:', error);
-      try {
-        handleFirestoreError(error, OperationType.CREATE, path);
-      } catch (innerError) {
-        // Error already logged to console
-      }
       toast.error('Failed to submit request. Please check your connection.');
     } finally {
       setIsSubmitting(false);

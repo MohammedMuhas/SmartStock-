@@ -1,33 +1,30 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { db, storage, handleFirestoreError, OperationType } from '../firebase';
-import { doc, updateDoc } from 'firebase/firestore';
-import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { useNavigate } from 'react-router-dom';
 import { User, Phone, Mail, Save, Loader2, CheckCircle2, Camera, Image as ImageIcon, ArrowLeft, Bell, BellOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
-import imageCompression from 'browser-image-compression';
 import { NotificationService } from '../services/notificationService';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { storage } from '../firebase';
 
-export const Profile: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
-  const { profile, user } = useAuth();
+export const Profile: React.FC = () => {
+  const { profile, user, updateProfile } = useAuth();
+  const navigate = useNavigate();
   const [displayName, setDisplayName] = useState('');
   const [whatsappNumber, setWhatsappNumber] = useState('');
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [hasSynced, setHasSynced] = useState(false);
 
   useEffect(() => {
     if (profile) {
       setDisplayName(prev => prev || profile.displayName || '');
       setWhatsappNumber(prev => prev || profile.whatsappNumber || '');
       setNotificationsEnabled(profile.notificationsEnabled || false);
-      // Only update image preview from profile if we're not currently picking a new one
       if (!imageFile) {
         setImagePreview(profile.photoURL || null);
       }
@@ -63,19 +60,10 @@ export const Profile: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      // Check file size (20MB limit)
-      const maxSize = 20 * 1024 * 1024;
-      if (file.size > maxSize) {
-        toast.error('Image size too large. Maximum allowed size is 20MB.');
-        return;
-      }
       setImageFile(file);
       const reader = new FileReader();
       reader.onloadend = () => {
         setImagePreview(reader.result as string);
-        toast.info('Image selected. Click "Save Changes" to upload.', {
-          icon: <ImageIcon className="w-4 h-4" />,
-        });
       };
       reader.readAsDataURL(file);
     }
@@ -83,108 +71,32 @@ export const Profile: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) return;
+    if (!user || !profile) return;
 
     setLoading(true);
-    // Loading toast removed as per user request
     
     try {
-      let photoURL = profile?.photoURL || '';
+      let photoURL = profile.photoURL || '';
 
       if (imageFile) {
-        setIsUploadingLogo(true);
-        // Update Firestore to show uploading state globally
-        try {
-          await updateDoc(doc(db, 'users', user.uid), {
-            isUploading: true
-          });
-        } catch (error) {
-          handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}`);
-        }
-        
-        const options = {
-          maxSizeMB: 2,
-          maxWidthOrHeight: 1200,
-          useWebWorker: true,
-          initialQuality: 0.8
-        };
-        
-        try {
-          const compressedFile = await imageCompression(imageFile, options);
-          const fileExtension = imageFile.name.split('.').pop() || 'jpg';
-          const storageRef = ref(storage, `profiles/${user.uid}/${Date.now()}_logo.${fileExtension}`);
-          
-          // Use uploadBytesResumable for better reliability
-          const uploadTask = uploadBytesResumable(storageRef, compressedFile);
-          
-          photoURL = await new Promise((resolve, reject) => {
-            uploadTask.on('state_changed', 
-              (snapshot) => {
-                const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-                console.log('Upload is ' + progress + '% done');
-              }, 
-              (error) => {
-                console.error('Upload error:', error);
-                reject(error);
-              }, 
-              async () => {
-                const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-                resolve(downloadURL);
-              }
-            );
-          });
-        } catch (compressionError) {
-          console.error('Compression error:', compressionError);
-          const fileExtension = imageFile.name.split('.').pop() || 'jpg';
-          const storageRef = ref(storage, `profiles/${user.uid}/${Date.now()}_logo.${fileExtension}`);
-          
-          const uploadTaskFallback = uploadBytesResumable(storageRef, imageFile);
-          
-          photoURL = await new Promise((resolve, reject) => {
-            uploadTaskFallback.on('state_changed', 
-              null, 
-              (error) => reject(error), 
-              async () => {
-                const downloadURL = await getDownloadURL(uploadTaskFallback.snapshot.ref);
-                resolve(downloadURL);
-              }
-            );
-          });
-        } finally {
-          setIsUploadingLogo(false);
-        }
+        const imageRef = ref(storage, `profiles/${user.uid}/${Date.now()}_${imageFile.name}`);
+        const uploadResult = await uploadBytes(imageRef, imageFile);
+        photoURL = await getDownloadURL(uploadResult.ref);
       }
 
-      try {
-        await updateDoc(doc(db, 'users', user.uid), {
-          displayName,
-          whatsappNumber,
-          photoURL,
-          notificationsEnabled,
-          isUploading: false,
-          updatedAt: new Date().toISOString(),
-        });
-      } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}`);
-      }
+      await updateProfile({
+        displayName,
+        whatsappNumber,
+        photoURL,
+        notificationsEnabled,
+        updatedAt: new Date().toISOString(),
+      });
       
       toast.success('Profile updated successfully!');
-      setImageFile(null); // Clear the file after successful upload
+      setImageFile(null);
     } catch (error) {
-      // If it's a firestore error already handled, don't show generic toast
-      if (!(error instanceof Error && error.message.startsWith('{'))) {
-        console.error('Error updating profile:', error);
-        toast.error('Failed to update profile. Please try again.');
-      }
-      
-      // Clear uploading flag in Firestore on error
-      try {
-        await updateDoc(doc(db, 'users', user.uid), {
-          isUploading: false
-        });
-      } catch (err) {
-        console.error('Error clearing isUploading:', err);
-      }
+      console.error('Error updating profile:', error);
+      toast.error('Failed to update profile.');
     } finally {
       setLoading(false);
     }
@@ -192,18 +104,17 @@ export const Profile: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
 
   return (
     <div className="max-w-2xl mx-auto">
-      <div className="mb-8">
-        {onBack && (
-          <button 
-            onClick={onBack}
-            className="flex items-center gap-2 text-slate-500 hover:text-slate-900 mb-4 transition-colors group md:hidden"
-          >
-            <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
-            <span className="text-sm font-semibold">Back</span>
-          </button>
-        )}
-        <h1 className="text-2xl font-bold text-slate-900">Profile Settings</h1>
-        <p className="text-slate-500">Manage your account information and contact details.</p>
+      <div className="flex items-center gap-4 mb-8">
+        <button 
+          onClick={() => navigate('/dashboard')}
+          className="p-2 hover:bg-slate-100 rounded-full transition-colors md:hidden"
+        >
+          <ArrowLeft className="w-6 h-6 text-slate-600" />
+        </button>
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Profile Settings</h1>
+          <p className="text-slate-500">Manage your account information and contact details.</p>
+        </div>
       </div>
 
       <AnimatePresence mode="wait">

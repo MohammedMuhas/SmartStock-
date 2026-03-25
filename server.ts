@@ -1,36 +1,139 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
-import cron from "node-cron";
 import { fileURLToPath } from "url";
-import { initializeApp } from "firebase/app";
-import { getFirestore, collection, getDocs, query, where, Timestamp } from "firebase/firestore";
-import admin from "firebase-admin";
-import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
-import { format, startOfDay, endOfDay } from "date-fns";
 import fs from "fs";
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
 import Razorpay from "razorpay";
 import crypto from "crypto";
+import admin from 'firebase-admin';
+import cron from 'node-cron';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load Firebase config
-const firebaseConfig = JSON.parse(fs.readFileSync(path.join(process.cwd(), "firebase-applet-config.json"), "utf-8"));
+// Initialize Firebase Admin
+const serviceAccountPath = path.join(__dirname, 'firebase-service-account.json');
+if (fs.existsSync(serviceAccountPath)) {
+  const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+  });
+  console.log('Firebase Admin initialized with service account');
+} else if (process.env.FIREBASE_PROJECT_ID) {
+  admin.initializeApp({
+    credential: admin.credential.applicationDefault(),
+    projectId: process.env.FIREBASE_PROJECT_ID
+  });
+  console.log('Firebase Admin initialized with application default credentials');
+} else {
+  console.warn('Firebase Admin not initialized: Missing credentials');
+}
 
-// Initialize Client SDK (for Vite/Frontend context if needed, though usually not on server)
-const firebaseApp = initializeApp(firebaseConfig);
-const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
+const db = admin.apps.length > 0 ? admin.firestore() : null;
 
-// Initialize Admin SDK (for scheduled tasks to bypass security rules)
-admin.initializeApp({
-  projectId: firebaseConfig.projectId,
-});
-const adminDb = getAdminFirestore(firebaseConfig.firestoreDatabaseId);
+// Scheduled Tasks
+if (db) {
+  // Daily Low Stock Summary (9:00 AM)
+  cron.schedule('0 9 * * *', async () => {
+    console.log('Running daily low stock check...');
+    try {
+      const usersSnapshot = await db.collection('users').get();
+      for (const userDoc of usersSnapshot.docs) {
+        const userData = userDoc.data();
+        if (!userData.notificationsEnabled || !userData.email) continue;
+
+        const productsSnapshot = await db.collection('products')
+          .where('ownerId', '==', userDoc.id)
+          .where('quantity', '<', 5)
+          .get();
+
+        if (productsSnapshot.empty) continue;
+
+        const lowStockItems = productsSnapshot.docs.map(doc => doc.data().name);
+        
+        // Send email notification
+        const transporter = nodemailer.createTransport({
+          service: "gmail",
+          auth: {
+            user: process.env.EMAIL_USER,
+            pass: process.env.EMAIL_PASS,
+          },
+        });
+
+        await transporter.sendMail({
+          from: `"SmartStock Alerts" <${process.env.EMAIL_USER}>`,
+          to: userData.email,
+          subject: 'Daily Low Stock Summary',
+          html: `
+            <h2>Low Stock Alert</h2>
+            <p>The following items in your shop are running low (less than 5 items):</p>
+            <ul>
+              ${lowStockItems.map(item => `<li>${item}</li>`).join('')}
+            </ul>
+            <p>Please restock soon to avoid missing sales!</p>
+          `
+        });
+      }
+    } catch (error) {
+      console.error('Error in daily low stock cron:', error);
+    }
+  });
+
+  // Daily Sales Summary (8:00 PM)
+  cron.schedule('0 20 * * *', async () => {
+    console.log('Running daily sales summary...');
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const usersSnapshot = await db.collection('users').get();
+      for (const userDoc of usersSnapshot.docs) {
+        const userData = userDoc.data();
+        if (!userData.notificationsEnabled || !userData.email) continue;
+
+        const salesSnapshot = await db.collection('sales')
+          .where('ownerId', '==', userDoc.id)
+          .where('soldAt', '>=', today.toISOString())
+          .get();
+
+        if (salesSnapshot.empty) continue;
+
+        const totalRevenue = salesSnapshot.docs.reduce((acc, doc) => acc + doc.data().totalAmount, 0);
+        const totalSales = salesSnapshot.docs.length;
+
+        // Send email notification
+        const transporter = nodemailer.createTransport({
+          service: "gmail",
+          auth: {
+            user: process.env.EMAIL_USER,
+            pass: process.env.EMAIL_PASS,
+          },
+        });
+
+        await transporter.sendMail({
+          from: `"SmartStock Reports" <${process.env.EMAIL_USER}>`,
+          to: userData.email,
+          subject: 'Daily Sales Summary',
+          html: `
+            <h2>Daily Sales Performance</h2>
+            <p>Great job today! Here is your summary for ${today.toLocaleDateString()}:</p>
+            <div style="background: #f0fdf4; padding: 20px; border-radius: 10px;">
+              <p style="font-size: 24px; color: #059669; margin: 0;">Total Revenue: ₹${totalRevenue}</p>
+              <p style="font-size: 18px; color: #065f46; margin: 5px 0 0 0;">Total Sales: ${totalSales}</p>
+            </div>
+            <p>Check your dashboard for detailed analytics.</p>
+          `
+        });
+      }
+    } catch (error) {
+      console.error('Error in daily sales summary cron:', error);
+    }
+  });
+}
 
 async function startServer() {
   const app = express();
@@ -161,20 +264,8 @@ async function startServer() {
 
     if (generatedSignature === razorpay_signature) {
       // Payment is verified
-      try {
-        if (userId) {
-          await adminDb.collection("users").doc(userId).update({
-            subscriptionStatus: "premium",
-            paymentId: razorpay_payment_id,
-            upgradedAt: new Date().toISOString()
-          });
-          console.log(`User ${userId} upgraded to premium via verified payment ${razorpay_payment_id}`);
-        }
-        res.json({ success: true, message: "Payment verified successfully" });
-      } catch (error) {
-        console.error("Error updating user subscription after verification:", error);
-        res.status(500).json({ error: "Payment verified but failed to update subscription" });
-      }
+      console.log(`Payment verified successfully for user ${userId || 'unknown'}`);
+      res.json({ success: true, message: "Payment verified successfully" });
     } else {
       res.status(400).json({ error: "Invalid signature, payment verification failed" });
     }
@@ -240,88 +331,6 @@ async function startServer() {
     }
   });
 
-  // Scheduled task at 9:40 PM daily
-  cron.schedule("40 21 * * *", async () => {
-    console.log("Running daily 9:40 PM WhatsApp notification task...");
-    try {
-      const today = new Date();
-      const start = startOfDay(today).toISOString();
-      const end = endOfDay(today).toISOString();
-
-      // 1. Fetch all users using Admin SDK (bypasses rules)
-      const usersSnapshot = await adminDb.collection("users").get();
-      
-      for (const userDoc of usersSnapshot.docs) {
-        const userData = userDoc.data();
-        if (!userData.whatsappNumber) continue;
-
-        // 2. Fetch sales for this user today using Admin SDK
-        const salesSnapshot = await adminDb.collection("sales")
-          .where("ownerId", "==", userData.uid)
-          .where("soldAt", ">=", start)
-          .where("soldAt", "<=", end)
-          .get();
-        
-        let totalAmount = 0;
-        let totalItems = 0;
-        const salesList: string[] = [];
-
-        salesSnapshot.forEach((doc) => {
-          const sale = doc.data();
-          totalAmount += sale.totalAmount;
-          totalItems += sale.quantitySold;
-          salesList.push(`- ${sale.productName} x ${sale.quantitySold} = ₹${sale.totalAmount}`);
-        });
-
-        // 3. Fetch low stock items using Admin SDK
-        const lowStockSnapshot = await adminDb.collection("products")
-          .where("ownerId", "==", userData.uid)
-          .where("quantity", "<", 5)
-          .get();
-
-        const lowStockList: string[] = [];
-        lowStockSnapshot.forEach((doc) => {
-          const product = doc.data();
-          lowStockList.push(`- ${product.name} (${product.quantity} left)`);
-        });
-
-        if (salesSnapshot.empty && lowStockSnapshot.empty) {
-          console.log(`No sales or low stock for user: ${userData.displayName} (${userData.email})`);
-          continue;
-        }
-
-        // 4. Prepare summary message
-        const dateStr = format(today, "dd-MMM-yyyy");
-        let message = `*DAILY SHOP SUMMARY*\n\n` +
-          `*Shop:* ${userData.displayName}\n` +
-          `*Date:* ${dateStr}\n\n`;
-
-        if (!salesSnapshot.empty) {
-          message += `*TOTAL SALES: ₹${totalAmount}*\n` +
-            `*Items Sold: ${totalItems}*\n\n` +
-            `*Sales Details:*\n` +
-            salesList.join("\n") + "\n\n";
-        }
-
-        if (!lowStockSnapshot.empty) {
-          message += `*⚠️ LOW STOCK ALERTS:*\n` +
-            lowStockList.join("\n") + "\n\n";
-        }
-
-        message += `Great job today!`;
-
-        console.log(`----------------------------------------`);
-        console.log(`AUTOMATIC NOTIFICATION PREPARED FOR: ${userData.whatsappNumber}`);
-        console.log(`MESSAGE:\n${message}`);
-        console.log(`----------------------------------------`);
-      }
-    } catch (error) {
-      console.error("Error in scheduled task:", error);
-    }
-  }, {
-    timezone: "Asia/Kolkata"
-  });
-
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -339,7 +348,6 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
-    console.log("Daily 9:40 PM WhatsApp notification task scheduled.");
   });
 }
 
